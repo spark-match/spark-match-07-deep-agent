@@ -12,6 +12,21 @@ El agente puede:
 - **Recomendar** carreras con scores y explicaciones personalizadas
 - **Planificar** rutas profesionales con cursos, certificaciones y timeline
 
+## Modelo RIASEC (6 dimensiones)
+
+El perfil vocacional se basa en el modelo **RIASEC de Holland**, que evalúa 6 dimensiones con scores de 1 a 10:
+
+| Letra | Dimensión | Descripción |
+|---|---|---|
+| **R** | Realista | Trabajo práctico, manual, mecánico, al aire libre |
+| **I** | Investigativo | Análisis, ciencia, resolución de problemas abstractos |
+| **A** | Artístico | Creatividad, expresión, diseño, innovación |
+| **S** | Social | Ayuda, enseñanza, servicio a personas, trabajo en equipo |
+| **E** | Emprendedor | Liderazgo, persuasión, gestión, toma de decisiones |
+| **C** | Convencional | Organización, datos, procedimientos, tareas estructuradas |
+
+El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del estudiante y se usa para calcular afinidad con carreras.
+
 ## Stack técnico
 
 | Componente | Tecnología |
@@ -208,6 +223,40 @@ El agente busca información actualizada de carreras, cursos y mercado laboral:
 # Configurar Tavily (opcional — sin key usa DDG directo)
 SPARK_TAVILY_API_KEY=tvly-tu-api-key
 ```
+
+## Configuración (variables de entorno)
+
+Todas las variables usan el prefijo `SPARK_` y se leen desde `.env` (ver `.env.example`).
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `SPARK_ENVIRONMENT` | `local` | Entorno de deployment: `local` \| `agentcore` |
+| `SPARK_MODEL_PROVIDER` | `bedrock` | Proveedor del LLM: `bedrock` \| `openai` \| `anthropic` \| `ollama` |
+| `SPARK_MODEL_ID` | `us.anthropic.claude-sonnet-4-20250514` | ID del modelo (depende del provider) |
+| `SPARK_AWS_REGION` | `us-east-1` | Región de AWS (para Bedrock) |
+| `SPARK_API_HOST` | `0.0.0.0` | Host del servidor FastAPI |
+| `SPARK_API_PORT` | `8000` | Puerto del servidor |
+| `SPARK_CORS_ORIGINS` | `["http://localhost:4200"]` | Lista JSON de orígenes CORS permitidos (Angular dev) |
+| `SPARK_AGENT_NAME` | `spark-match-advisor` | Nombre del agente (visible en logs/traces) |
+| `SPARK_MAX_TURNS` | `50` | Máximo de turnos por sesión antes de cortar |
+| `SPARK_TAVILY_API_KEY` | — | API key de Tavily (opcional; sin ella usa DuckDuckGo) |
+| `SPARK_LANGSMITH_API_KEY` | — | API key de LangSmith (opcional; para observabilidad) |
+| `SPARK_LANGSMITH_PROJECT` | `spark-match-agent` | Nombre del proyecto en LangSmith |
+| `SPARK_LANGSMITH_TRACING` | `false` | Habilitar tracing en LangSmith (`true` \| `false`) |
+
+## Troubleshooting
+
+Problemas comunes y cómo resolverlos:
+
+| Síntoma | Causa probable | Solución |
+|---|---|---|
+| `AccessDeniedException` al llamar a Bedrock | El modelo no está habilitado en tu cuenta AWS | Ir a Bedrock console → Model access → Enable `Claude Sonnet 4` |
+| `ModuleNotFoundError: No module named 'src'` | `uv sync` no se ejecutó o se ejecutó desde otro directorio | `cd` al root del repo y `uv sync` |
+| `ValidationError: SPARK_MODEL_ID` | Variable mal escrita o sin prefijo `SPARK_` | Ver `.env.example` y respetar prefijo `SPARK_` |
+| Tavily devuelve 401 | API key inválida o expirada | Regenerar key en https://tavily.com y actualizar `.env` |
+| Frontend no se conecta al agente | CORS bloqueado | Agregar el origen del frontend a `SPARK_CORS_ORIGINS` |
+| Tests fallan con `ImportError` | `uv sync --all-extras` no ejecutado | `uv sync --all-extras` instala pytest/ruff/mypy |
+| El agente no llama a las tools | El system prompt no las está referenciando | Ver `src/prompts/system.py` y que liste las tools explícitamente |
 
 ## Migración a producción (AgentCore)
 
