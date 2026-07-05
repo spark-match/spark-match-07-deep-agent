@@ -6,91 +6,82 @@
 > **Reglas de matching**: la última coincidencia gana. Ver https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # =============================================================================
-# Catch-all: cualquier archivo no listado abajo
-#
-# Política de CODE OWNERS:
-#   - Contenido técnico (agente, prompts, tools): ai-devs
-#   - Gobernanza: devops + product-owners
-#   - 1 aprobación de devops + 1 aprobación de product-owners es REQUERIDA
-#     (configurado en branch protection con required_approving_review_count: 2)
-#
-# Solo CODE OWNERS pueden aprobar PRs (require_code_owner_reviews: true).
-# El autor del PR no puede aprobar su propio PR, ni siquiera siendo CODE OWNER.
+# Política de aprobación
 # =============================================================================
-*                                          @spark-match/ai-devs @spark-match/devops @spark-match/product-owners
+# - required_approving_review_count: 1
+# - require_code_owner_reviews: true
+# - enforce_admins: true
+# - Solo product-owners puede aprobar PRs (son los únicos CODE OWNERS)
+# - El autor del PR no puede aprobar su propio PR, ni siquiera siendo CODE OWNER
+# =============================================================================
+
+# =============================================================================
+# Catch-all: cualquier archivo no listado abajo
+# Aprobación requerida: 1 de product-owners
+# =============================================================================
+*                                          @spark-match/product-owners
 
 # =============================================================================
 # Código del agente (src/) — núcleo de la lógica
-# Revisión primaria: ai-devs (contenido técnico)
 # =============================================================================
-/src/                                      @spark-match/ai-devs @spark-match/devops @spark-match/product-owners
+/src/                                      @spark-match/product-owners
 
 # =============================================================================
 # Skills del agente (skills/) — prompts y herramientas del advisor
-# Revisión primaria: ai-devs (calidad de prompts)
 # =============================================================================
-/skills/                                   @spark-match/ai-devs @spark-match/devops @spark-match/product-owners
+/skills/                                   @spark-match/product-owners
 
 # =============================================================================
 # Tests (tests/) — cobertura y calidad
-# Revisión primaria: ai-devs
 # =============================================================================
-/tests/                                    @spark-match/ai-devs @spark-match/devops @spark-match/product-owners
+/tests/                                    @spark-match/product-owners
 
 # =============================================================================
 # Dependencias y configuración de Python
-# Cambios en pyproject.toml/uv.lock pueden afectar a todo el equipo.
-# Revisión: devops (por impacto operativo) + product-owners (gobernanza)
 # =============================================================================
-/pyproject.toml                            @spark-match/devops @spark-match/product-owners
-/uv.lock                                   @spark-match/devops @spark-match/product-owners
-/.python-version                           @spark-match/devops
+/pyproject.toml                            @spark-match/product-owners
+/uv.lock                                   @spark-match/product-owners
+/.python-version                           @spark-match/product-owners
 
 # =============================================================================
 # Secretos y configuración de entorno
-# Cambios en .env.example pueden exponer información sensible si se filtran.
-# Revisión estricta: devops (seguridad)
 # =============================================================================
-/.env.example                              @spark-match/devops @spark-match/product-owners
-/.env                                      @spark-match/devops @spark-match/product-owners
+/.env.example                              @spark-match/product-owners
+/.env                                      @spark-match/product-owners
 
 # =============================================================================
 # Documentación raíz
-# Cambios al README afectan a todos los colaboradores y usuarios externos.
-# Revisión: product-owners
 # =============================================================================
 /README.md                                 @spark-match/product-owners
 
 # =============================================================================
 # Configuración de GitHub — CODEOWNERS, workflows, templates
-# Cambios en CI/CD requieren revisión de devops.
 # =============================================================================
-/.github/                                  @spark-match/devops @spark-match/product-owners
-/.github/CODEOWNERS                        @spark-match/devops @spark-match/product-owners
+/.github/                                  @spark-match/product-owners
+/.github/CODEOWNERS                        @spark-match/product-owners
 
 # =============================================================================
 # Notas operativas
 # =============================================================================
 # 1. Política de aprobación de PRs (configurada en branch protection):
-#    - required_approving_review_count: 2
+#    - required_approving_review_count: 1
 #    - require_code_owner_reviews: true
 #    - enforce_admins: true
 #    - dismiss_stale_reviews: true
+#    - require_last_push_approval: true
 #    - conversation_resolution: true
 #
-# 2. Patrón ideal de aprobación: 1 de devops + 1 de product-owners.
-#    Como el autor no puede aprobar su propio PR, un PR abierto por
-#    ahincho (miembro de las 3 teams) requiere 2 aprobaciones de
-#    dbarretol + (cualquiera de las 2 teams con un 3er miembro).
-#    Cuando el equipo crezca, esta restricción se cumplirá naturalmente.
+# 2. Solo miembros del team @spark-match/product-owners pueden aprobar PRs.
+#    Los miembros de ai-devs y devops pueden comentar, sugerir cambios y
+#    hacer code review visual, pero NO pueden hacer click en "Approve".
 #
-# 3. Para añadir un nuevo CODE OWNER, agregarlo al team correspondiente:
-#      gh api -X PUT orgs/spark-match/teams/ai-devs/memberships/<user> -f role=member
-#      gh api -X PUT orgs/spark-match/teams/devops/memberships/<user> -f role=member
+# 3. El autor del PR no puede aprobar su propio PR, ni siquiera siendo
+#    CODE OWNER (regla de GitHub). Por ejemplo, un PR abierto por ahincho
+#    (miembro de product-owners) necesita la aprobación de dbarretol o
+#    FabiTaparaQuispe.
+#
+# 4. Para añadir un nuevo aprobador, agregarlo al team product-owners:
 #      gh api -X PUT orgs/spark-match/teams/product-owners/memberships/<user> -f role=member
-#
-# 4. Para que un CODE OWNER tenga efecto, el team debe tener al menos
-#    acceso READ al repositorio.
 #
 # 5. Los CODEOWNERS listados en una sección más específica GANAN sobre
 #    el catch-all (`*`) por la regla de "última coincidencia".

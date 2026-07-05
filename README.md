@@ -232,6 +232,17 @@ Esto activará:
 | **A2A** | 🔜 Futuro | Agent ↔ Agent (multi-agent cross-framework) |
 | **A2UI** | 🔜 Futuro | Agent → Frontend (generative UI components) |
 
+## Trabajos futuros
+
+- **Observabilidad con LangSmith**: integrar [LangSmith](https://www.langchain.com/langsmith) para tracing, monitoring y debugging de los subagentes y tools. Esto nos dará visibilidad sobre:
+  - Latencia por subagente (`assessment`, `matching`, `planning`)
+  - Tokens consumidos por sesión y por usuario
+  - Traces completos de las tool calls (input/output de `evaluate_riasec_profile`, `search_careers`, `calculate_affinity`, `web_search`)
+  - Detección de alucinaciones y fallos en el razonamiento
+  - Datasets de evaluación a partir de interacciones reales (para regression testing)
+  
+  La integración se hará mediante las variables de entorno `LANGSMITH_API_KEY`, `LANGSMITH_TRACING=true` y `LANGSMITH_PROJECT=spark-match-dev` (o `spark-match-prod`), aprovechando el soporte nativo de `langchain-aws` y `deepagents` con LangSmith.
+
 ## Contexto académico
 
 Trabajo de Fin de Programa (TFP) — **UNI** II Programa de Especialización en IA Generativa y Machine Learning Ops.

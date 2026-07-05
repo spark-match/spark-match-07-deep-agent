@@ -44,5 +44,9 @@
 
 ## Aprobaciones requeridas
 
-Este PR requiere **2 aprobaciones** de CODE OWNERS (1 idealmente de `devops` + 1 de `product-owners`).
-Como el autor no puede aprobar su propio PR, se necesitan 2 reviewers distintos.
+Este PR requiere **1 aprobación** de un miembro del team `@spark-match/product-owners`.
+Como el autor no puede aprobar su propio PR, se necesita un revisor distinto que sea
+miembro de `product-owners`.
+
+Los miembros de `ai-devs` y `devops` pueden comentar y hacer code review, pero **no pueden
+hacer click en Approve** (solo `product-owners` es CODE OWNER).
