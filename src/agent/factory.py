@@ -1,4 +1,4 @@
-"""Agent factory â€” assembles the Spark Match Deep Agent with subagents and memory."""
+"""Agent factory Ã¢â‚¬â€ assembles the Spark Match Deep Agent with subagents and memory."""
 
 from collections.abc import Sequence
 from typing import Any, cast
@@ -40,10 +40,10 @@ def create_spark_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
     - Each subagent has access to the extracted profile context
 
     The coordinator decides when to delegate:
-    - "Quiero descubrir mi perfil" â†’ assessment subagent
-    - "QuÃ© carreras me convienen?" â†’ matching subagent
-    - "Dame un plan para llegar a X" â†’ planning subagent
-    - General questions â†’ coordinator handles directly
+    - "Quiero descubrir mi perfil" Ã¢â€ â€™ assessment subagent
+    - "QuÃƒÂ© carreras me convienen?" Ã¢â€ â€™ matching subagent
+    - "Dame un plan para llegar a X" Ã¢â€ â€™ planning subagent
+    - General questions Ã¢â€ â€™ coordinator handles directly
     """
     settings = get_settings()
 
@@ -74,6 +74,6 @@ def create_spark_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
     # TODO(max-turns-guard, Sprint 4): Wire `settings.max_turns` into a
     # post-model middleware so the agent stops cleanly at N turns instead of
     # relying on LangGraph's `recursion_limit` (which produces cryptic errors).
-    # See IMPROVEMENTS.md Â§4.2 for the proposed middleware implementation.
+    # See IMPROVEMENTS.md Ã‚Â§4.2 for the proposed middleware implementation.
 
-    return agent
+    return agent  # noqa: RET504 â€” kept as a local for the upcoming middleware hook

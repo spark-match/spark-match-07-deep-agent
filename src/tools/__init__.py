@@ -6,8 +6,8 @@ from src.tools.matching import calculate_affinity
 from src.tools.web_search import web_search
 
 __all__ = [
+    "calculate_affinity",
     "evaluate_riasec_profile",
     "search_careers",
-    "calculate_affinity",
     "web_search",
 ]

@@ -949,11 +949,11 @@ El `pyproject.toml` tiene `version = "0.1.0"` pero no hay CHANGELOG. Para el TFP
 - [x] **FIX-2**: Resolver 16 errores pre-existentes de mypy strict (TypedDicts, generics, type annotations)
 - [ ] §4.4 Guard técnico en assessment (turn-count para `evaluate_riasec_profile`) — movido a Sprint 4
 
-### Sprint 3 (3-5 días) — Observabilidad y eval
+### Sprint 3 (3-5 días) — Observabilidad y eval ✅ Completado (PR #7)
 
-- [ ] §4.1 Integrar Opik (o LangSmith)
-- [ ] §4.6 Mover prompts a `.md` versionados
-- [ ] §5.1 Ampliar ruff/mypy config (ruff `ASYNC`/`PT`/`RET`/`RUF`, mypy `disallow_untyped_defs`)
+- [x] §4.1 Integrar **LangSmith** (no Opik) — wiring automático via `LANGSMITH_*` env vars. `src/observability/langsmith.py` con `configure_langsmith()` idempotente.
+- [x] §4.6 Mover los 4 prompts a `src/prompts/*.md` con YAML frontmatter + loader cacheable (`load_prompt()`, `reload_prompts()`, `list_prompts()`).
+- [x] §5.1 ruff: `select = [..., "ASYNC", "PT", "RET", "RUF"]` + `per-file-ignores` para tests. mypy: `disallow_untyped_defs`, `no_implicit_optional`, `warn_redundant_casts`, `warn_unused_ignores`.
 
 ### Sprint 4 (opcional) — Refactor y evals
 

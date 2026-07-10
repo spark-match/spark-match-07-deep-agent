@@ -26,16 +26,8 @@ dependencies = [
     # Web search: Tavily (primary) + DuckDuckGo (fallback)
     "tavily-python>=0.5.0",
     "duckduckgo-search>=7.0.0",
-    # YAML frontmatter for career catalog (data/careers/*.md)
+    # YAML frontmatter for career catalog + prompts
     "pyyaml>=6.0.3",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.3.0",
-    "pytest-asyncio>=1.0.0",
-    "ruff>=0.9.0",
-    "mypy>=1.15.0",
 ]
 
 [build-system]
@@ -51,10 +43,24 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# E/W: pycodestyle  F: pyflakes  I: isort  UP: pyupgrade  B: bugbear  SIM: simplify
+# ASYNC: async-correctness  PT: pytest-style  RET: return-statements  RUF: ruff-specific
+select = [
+    "E", "F", "I", "UP", "B", "SIM",
+    "ASYNC", "PT", "RET", "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assert freely, allow long lines in test docstrings, and pytest fixtures
+# commonly import without using (e.g. for fixture registration).
+"tests/**/*.py" = ["S101", "PT004"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -69,6 +75,11 @@ python_functions = ["test_*"]
 [tool.mypy]
 python_version = "3.14"
 strict = true
+# Extra strictness on top of `strict = true`:
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
 warn_return_any = true
 warn_unused_configs = true
 
@@ -87,5 +98,9 @@ ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=1.0.0",
+    "ruff>=0.9.0",
+    "mypy>=1.15.0",
     "types-pyyaml>=6.0.12.20260518",
 ]

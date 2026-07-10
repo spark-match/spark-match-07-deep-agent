@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from src.agent import create_spark_agent
 from src.budget import reset_session_budget, set_active_session
 from src.config import get_settings
+from src.observability.langsmith import configure_langsmith
 from src.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         settings.environment.value,
         settings.model_string,
     )
+
+    # LangSmith tracing. Idempotent: pushes SPARK_* settings into the
+    # LANGSMITH_* env vars that langchain-aws / deepagents read automatically.
+    configure_langsmith()
 
     # Create the Deep Agent (compiled LangGraph state graph).
     graph = create_spark_agent()

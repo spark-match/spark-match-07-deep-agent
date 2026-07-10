@@ -70,4 +70,4 @@ def create_profile_manager() -> object:
         enable_inserts=False,  # Single profile per user, update in-place
     )
 
-    return manager
+    return manager  # noqa: RET504 — kept as a local for test inspection
