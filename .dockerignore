@@ -1,0 +1,122 @@
+# =============================================================================
+# Spark Match Deep Agent — .dockerignore
+# =============================================================================
+# Excludes everything not needed at runtime in the AgentCore container image.
+# The Dockerfile installs dependencies via `uv sync --no-dev` so the runtime
+# image carries .venv + uv.lock + .python-version + src/ + skills/ + README.md
+# only.
+# =============================================================================
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Python build / cache artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Test artifacts
+tests/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.tox/
+.nox/
+.hypothesis/
+
+# Type checker caches
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Virtual environments (re-installed inside the image)
+.venv/
+venv/
+env/
+
+# Secrets and local config
+.env
+.env.local
+.env.*.local
+.envrc
+
+# IDE / editor
+.idea/
+.vscode/
+.cursor/
+.cursorignore
+.cursorindexingignore
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Notebooks
+.ipynb_checkpoints/
+
+# LangChain / LangGraph caches
+.langchain/
+.langgraph/
+traceloop/
+
+# ML model files (deployed via S3 / DVC, not baked into image)
+models/*.pt
+models/*.pth
+models/*.h5
+models/*.pkl
+models/*.joblib
+models/*.onnx
+*.dvc
+.dvc/
+.dvcignore
+dvc.lock
+
+# MLflow / WandB
+mlruns/
+mlflow.db
+mlflow.db-*
+wandb/
+.wandb/
+
+# Bedrock / AgentCore local state
+.agentcore/
+.bedrock/
+.bedrock-agentcore/
+
+# Docs not needed in container (README is whitelisted below)
+DEPLOYMENT.md
+RESUMEN_PROYECTO.md
+IMPROVEMENTS.md
+CHANGELOG.md
+
+# Makefile (host-side convenience only)
+Makefile
+
+# Windows-specific junk
+Thumbs.db
+desktop.ini

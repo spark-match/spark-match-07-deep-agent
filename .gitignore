@@ -36,13 +36,13 @@ wheels/
 venv/
 env/
 ENV/
-.python-version
+# .python-version IS versioned (reproducible builds, uv best practice)
 
 # -----------------------------------------------------------------------------
 # uv (package manager)
 # -----------------------------------------------------------------------------
 .uv/
-uv.lock
+# uv.lock IS versioned (reproducible builds, uv best practice for applications)
 
 # -----------------------------------------------------------------------------
 # Testing

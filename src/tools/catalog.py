@@ -118,12 +118,14 @@ def search_careers(query: str, field: str | None = None) -> list[dict]:
 
     for career in CAREER_CATALOG:
         # Match against name, description, skills, and field
-        searchable = " ".join([
-            career["name"].lower(),
-            career["description"].lower(),
-            " ".join(career["skills"]),
-            career["field"].lower(),
-        ])
+        searchable = " ".join(
+            [
+                career["name"].lower(),
+                career["description"].lower(),
+                " ".join(career["skills"]),
+                career["field"].lower(),
+            ]
+        )
 
         if query_lower in searchable and (
             field is None or field.lower() in career["field"].lower()
