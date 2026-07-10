@@ -26,6 +26,8 @@ dependencies = [
     # Web search: Tavily (primary) + DuckDuckGo (fallback)
     "tavily-python>=0.5.0",
     "duckduckgo-search>=7.0.0",
+    # YAML frontmatter for career catalog (data/careers/*.md)
+    "pyyaml>=6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -69,3 +71,21 @@ python_version = "3.14"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+# Third-party libraries without py.typed markers. We can't fix upstream,
+# so silence `import-untyped` for them. App code remains strictly checked.
+[[tool.mypy.overrides]]
+module = [
+    "ag_ui_langgraph",
+    "ag_ui_langgraph.*",
+    "tavily",
+    "langmem",
+    "deepagents",
+    "deepagents.*",
+]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "types-pyyaml>=6.0.12.20260518",
+]

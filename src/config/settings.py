@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # --- Agent Configuration ---
     agent_name: str = "spark-match-advisor"
     max_turns: int = 50
+    # Per-session cap on web_search tool calls (prevents Tavily quota
+    # burn on runaway planner loops). Set to 0 to disable the cap.
+    max_web_searches_per_session: int = 6
 
     # --- API Server ---
     api_host: str = "0.0.0.0"

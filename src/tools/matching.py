@@ -1,8 +1,21 @@
 """Affinity matching tool — calculates compatibility between profile and careers."""
 
+from typing import TypedDict
+
 from langchain_core.tools import tool
 
 from src.tools.catalog import CAREER_CATALOG
+
+
+class AffinityResult(TypedDict):
+    """Shape of an entry in the affinity ranking returned to the LLM."""
+
+    career_id: str
+    career_name: str
+    affinity_score: float
+    career_riasec: str
+    field: str
+    reason: str
 
 
 def _riasec_similarity(profile_code: str, career_code: str) -> float:
@@ -29,7 +42,7 @@ def _riasec_similarity(profile_code: str, career_code: str) -> float:
 
 
 @tool
-def calculate_affinity(riasec_code: str, top_n: int = 5) -> list[dict]:
+def calculate_affinity(riasec_code: str, top_n: int = 5) -> list[AffinityResult]:
     """Calculate affinity scores between a RIASEC profile and all careers in the catalog.
 
     Returns the top-N careers sorted by affinity score with explanations.
@@ -40,22 +53,22 @@ def calculate_affinity(riasec_code: str, top_n: int = 5) -> list[dict]:
     """
     riasec_code = riasec_code.upper()[:3]
 
-    results = []
+    results: list[AffinityResult] = []
     for career in CAREER_CATALOG:
         score = _riasec_similarity(riasec_code, career["riasec_profile"])
         results.append(
-            {
-                "career_id": career["id"],
-                "career_name": career["name"],
-                "affinity_score": score,
-                "career_riasec": career["riasec_profile"],
-                "field": career["field"],
-                "reason": (
+            AffinityResult(
+                career_id=career["id"],
+                career_name=career["name"],
+                affinity_score=score,
+                career_riasec=career["riasec_profile"],
+                field=career["field"],
+                reason=(
                     f"Tu perfil {riasec_code} tiene {score}% de afinidad con "
                     f"{career['name']} (perfil {career['riasec_profile']}). "
                     f"Campo: {career['field']}."
                 ),
-            }
+            )
         )
 
     # Sort by score descending

@@ -1,4 +1,4 @@
-"""Configuration module for Spark Match Agent."""
+"""Configuration package — Pydantic settings."""
 
 from src.config.settings import Settings, get_settings
 

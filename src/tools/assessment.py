@@ -11,7 +11,7 @@ def evaluate_riasec_profile(
     social: int,
     enterprising: int,
     conventional: int,
-) -> dict:
+) -> dict[str, object]:
     """Evaluate a student's RIASEC vocational profile from assessment scores.
 
     Each dimension is scored 1-10 based on the student's responses.

@@ -50,7 +50,7 @@ You are analyzing a vocational guidance conversation to extract a student's prof
 """
 
 
-def create_profile_manager():
+def create_profile_manager() -> object:
     """Create a langmem memory manager configured for StudentProfile extraction.
 
     Returns a callable that accepts conversation messages and returns
