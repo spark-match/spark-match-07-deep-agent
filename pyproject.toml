@@ -58,6 +58,11 @@ known-first-party = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
+# Convention: tests/<domain>/<module>.py (no `test_` prefix on filenames).
+# pytest discovery picks up files matching `python_files` recursively.
+python_files = ["*.py"]
+python_classes = ["Test*", "*Tool"]
+python_functions = ["test_*"]
 
 [tool.mypy]
 python_version = "3.14"
