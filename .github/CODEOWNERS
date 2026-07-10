@@ -1,12 +1,34 @@
-﻿# CODEOWNERS — Spark Match Deep Agent
+# CODEOWNERS — Spark Match Deep Agent
 #
-# Política de aprobación (ADR-003 branch-based deployment):
-# - dev: 1 aprobación del CODE OWNER técnico (ai-devs) es suficiente.
-# - main: 1 CODE OWNER review (ai-devs) + reviewer manual de
-#   @spark-match/product-owners (solicitado por el autor al abrir el PR).
+# Define quién revisa los PRs en cada área del repositorio. La última
+# coincidencia gana (GitHub evalúa de abajo hacia arriba).
+# Ver https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 #
-# CODE OWNERS del repo: @spark-match/ai-devs
-#   Miembros actuales: ahincho, nikolaiasencios
+# Política de aprobación (configurada en branch protection):
+#   - dev:  required_approving_review_count: 1
+#            require_code_owner_reviews: true
+#   - main: required_approving_review_count: 1
+#            require_code_owner_reviews: true
+#            require_last_push_approval: true
+#
+# CODE OWNER del repo: @spark-match/ai-devs
+#   Miembros: ahincho, nikolaiasencios, FabiTaparaQuispe
+#
+# Nota: el autor del PR no puede aprobar su propio PR, ni siquiera
+# siendo CODE OWNER (regla de GitHub). Por ejemplo, un PR abierto por
+# ahincho necesita la aprobación de nikolaiasencios o FabiTaparaQuispe.
 
-# Catch-all: cualquier archivo es responsabilidad de ai-devs
-*       @spark-match/ai-devs
+# =============================================================================
+# Catch-all: cualquier archivo no listado abajo
+# CODE OWNER: ai-devs (el equipo que desarrolla y mantiene el agente)
+# =============================================================================
+*                                          @spark-match/ai-devs
+
+# =============================================================================
+# Configuración de GitHub — CODEOWNERS, workflows, templates
+# Cambios en CI/CD y governance requieren revisión explícita de ai-devs
+# (sobrescribe el catch-all, sigue siendo ai-devs pero listada para
+#  visibilidad y futura extensión a un team diferente si se requiere).
+# =============================================================================
+/.github/                                  @spark-match/ai-devs
+/.github/CODEOWNERS                        @spark-match/ai-devs
