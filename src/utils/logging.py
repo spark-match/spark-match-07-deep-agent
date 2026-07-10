@@ -62,7 +62,7 @@ def setup_logging(
         None,
     )
     if existing is None:
-        handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
+        handler = logging.StreamHandler(stream if stream is not None else sys.stderr)  # type: ignore[arg-type]
         handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
         root.addHandler(handler)
         _INSTALLED_HANDLERS.add(id(handler))

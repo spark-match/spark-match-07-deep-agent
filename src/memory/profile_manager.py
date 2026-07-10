@@ -50,7 +50,7 @@ You are analyzing a vocational guidance conversation to extract a student's prof
 """
 
 
-def create_profile_manager():
+def create_profile_manager() -> object:
     """Create a langmem memory manager configured for StudentProfile extraction.
 
     Returns a callable that accepts conversation messages and returns
@@ -70,4 +70,4 @@ def create_profile_manager():
         enable_inserts=False,  # Single profile per user, update in-place
     )
 
-    return manager
+    return manager  # noqa: RET504 — kept as a local for test inspection

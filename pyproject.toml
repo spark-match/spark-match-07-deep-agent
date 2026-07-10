@@ -26,14 +26,8 @@ dependencies = [
     # Web search: Tavily (primary) + DuckDuckGo (fallback)
     "tavily-python>=0.5.0",
     "duckduckgo-search>=7.0.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.3.0",
-    "pytest-asyncio>=1.0.0",
-    "ruff>=0.9.0",
-    "mypy>=1.15.0",
+    # YAML frontmatter for career catalog + prompts
+    "pyyaml>=6.0.3",
 ]
 
 [build-system]
@@ -49,18 +43,68 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# E/W: pycodestyle  F: pyflakes  I: isort  UP: pyupgrade  B: bugbear  SIM: simplify
+# ASYNC: async-correctness  PT: pytest-style  RET: return-statements  RUF: ruff-specific
+select = [
+    "E", "F", "I", "UP", "B", "SIM",
+    "ASYNC", "PT", "RET", "RUF",
+]
+# RUF001/RUF002 (ambiguous characters in strings/docstrings) and RUF012
+# (mutable class attributes) are too noisy given existing patterns.
+# Re-enable once the codebase has been cleaned up.
+ignore = ["RUF001", "RUF002", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assert freely, allow long lines in test docstrings, and pytest fixtures
+# commonly import without using (e.g. for fixture registration).
+"tests/**/*.py" = ["S101", "PT004"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
+# Convention: tests/<domain>/<module>.py (no `test_` prefix on filenames).
+# pytest discovery picks up files matching `python_files` recursively.
+python_files = ["*.py"]
+python_classes = ["Test*", "*Tool"]
+python_functions = ["test_*"]
 
 [tool.mypy]
 python_version = "3.14"
 strict = true
+# Extra strictness on top of `strict = true`:
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
 warn_return_any = true
 warn_unused_configs = true
+
+# Third-party libraries without py.typed markers. We can't fix upstream,
+# so silence `import-untyped` for them. App code remains strictly checked.
+[[tool.mypy.overrides]]
+module = [
+    "ag_ui_langgraph",
+    "ag_ui_langgraph.*",
+    "tavily",
+    "langmem",
+    "deepagents",
+    "deepagents.*",
+]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=1.0.0",
+    "ruff>=0.9.0",
+    "mypy>=1.15.0",
+    "types-pyyaml>=6.0.12.20260518",
+]

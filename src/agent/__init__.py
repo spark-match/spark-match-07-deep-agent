@@ -1,4 +1,4 @@
-"""Agent module — creates and configures the Spark Match Deep Agent."""
+"""Agent package — factory and subagent definitions."""
 
 from src.agent.factory import create_spark_agent
 
