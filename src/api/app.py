@@ -1,5 +1,6 @@
 """FastAPI application with AG-UI streaming endpoint."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -9,12 +10,24 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.agent import create_spark_agent
 from src.config import get_settings
+from src.utils import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """Application lifespan — initialize agent on startup."""
+    """Application lifespan — initialize logging and agent on startup."""
     settings = get_settings()
+
+    # Centralized logging (idempotent). Runs before agent construction so
+    # any deprecation warnings / import errors are captured.
+    setup_logging(level=settings.log_level)
+    logger.info(
+        "Starting Spark Match agent (environment=%s, model=%s)",
+        settings.environment.value,
+        settings.model_string,
+    )
 
     # Create the Deep Agent
     agent = create_spark_agent()
@@ -34,6 +47,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.settings = settings
 
     yield
+
+    logger.info("Spark Match agent stopped")
 
 
 def create_app() -> FastAPI:
