@@ -1,8 +1,13 @@
 """Agent factory — assembles the Spark Match Deep Agent with subagents and memory."""
 
+from collections.abc import Sequence
+from typing import cast
+
 from deepagents import create_deep_agent
+from deepagents.middleware.subagents import SubAgent
 from langgraph.graph.state import CompiledStateGraph
 
+from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
     MATCHING_SUBAGENT,
@@ -42,6 +47,13 @@ def create_spark_agent() -> CompiledStateGraph:
     """
     settings = get_settings()
 
+    # SubAgent is a TypedDict; mypy sees plain dict[str, Sequence[object]] from
+    # the imported constants, so we cast to satisfy the SubAgent contract.
+    subagents: Sequence[SubAgent] = cast(
+        "Sequence[SubAgent]",
+        [ASSESSMENT_SUBAGENT, MATCHING_SUBAGENT, PLANNING_SUBAGENT],
+    )
+
     agent = create_deep_agent(
         model=settings.model_string,
         tools=[
@@ -50,13 +62,13 @@ def create_spark_agent() -> CompiledStateGraph:
             calculate_affinity,
             web_search,
         ],
-        subagents=[
-            ASSESSMENT_SUBAGENT,
-            MATCHING_SUBAGENT,
-            PLANNING_SUBAGENT,
-        ],
+        subagents=subagents,
         system_prompt=SYSTEM_PROMPT,
         name=settings.agent_name,
+        middleware=[
+            MaxTurnsMiddleware(),
+            AssessmentOnceMiddleware(),
+        ],
     )
 
     return agent
