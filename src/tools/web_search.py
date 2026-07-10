@@ -22,7 +22,8 @@ def _search_tavily(query: str, max_results: int = 5) -> list[dict]:
     if not settings.tavily_api_key:
         raise ValueError("TAVILY_API_KEY not configured")
 
-    client = TavilyClient(api_key=settings.tavily_api_key)
+    # SecretStr.get_secret_value() returns the raw str for upstream auth.
+    client = TavilyClient(api_key=settings.tavily_api_key.get_secret_value())
     response = client.search(
         query=query,
         max_results=max_results,
@@ -32,20 +33,25 @@ def _search_tavily(query: str, max_results: int = 5) -> list[dict]:
 
     results = []
     for item in response.get("results", []):
-        results.append({
-            "title": item.get("title", ""),
-            "url": item.get("url", ""),
-            "content": item.get("content", ""),
-        })
+        results.append(
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "content": item.get("content", ""),
+            }
+        )
 
     # Include Tavily's AI-generated answer if available
     answer = response.get("answer")
     if answer:
-        results.insert(0, {
-            "title": "AI Summary",
-            "url": "",
-            "content": answer,
-        })
+        results.insert(
+            0,
+            {
+                "title": "AI Summary",
+                "url": "",
+                "content": answer,
+            },
+        )
 
     return results
 
@@ -57,11 +63,13 @@ def _search_duckduckgo(query: str, max_results: int = 5) -> list[dict]:
 
     results = []
     for item in raw_results:
-        results.append({
-            "title": item.get("title", ""),
-            "url": item.get("href", ""),
-            "content": item.get("body", ""),
-        })
+        results.append(
+            {
+                "title": item.get("title", ""),
+                "url": item.get("href", ""),
+                "content": item.get("body", ""),
+            }
+        )
 
     return results
 

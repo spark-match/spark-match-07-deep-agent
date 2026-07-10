@@ -43,18 +43,20 @@ def calculate_affinity(riasec_code: str, top_n: int = 5) -> list[dict]:
     results = []
     for career in CAREER_CATALOG:
         score = _riasec_similarity(riasec_code, career["riasec_profile"])
-        results.append({
-            "career_id": career["id"],
-            "career_name": career["name"],
-            "affinity_score": score,
-            "career_riasec": career["riasec_profile"],
-            "field": career["field"],
-            "reason": (
-                f"Tu perfil {riasec_code} tiene {score}% de afinidad con "
-                f"{career['name']} (perfil {career['riasec_profile']}). "
-                f"Campo: {career['field']}."
-            ),
-        })
+        results.append(
+            {
+                "career_id": career["id"],
+                "career_name": career["name"],
+                "affinity_score": score,
+                "career_riasec": career["riasec_profile"],
+                "field": career["field"],
+                "reason": (
+                    f"Tu perfil {riasec_code} tiene {score}% de afinidad con "
+                    f"{career['name']} (perfil {career['riasec_profile']}). "
+                    f"Campo: {career['field']}."
+                ),
+            }
+        )
 
     # Sort by score descending
     results.sort(key=lambda x: x["affinity_score"], reverse=True)
