@@ -5,28 +5,30 @@ This module:
 
 1. Discovers all ``*.md`` files in the catalog directory at startup.
 2. Parses YAML frontmatter into :class:`Career` TypedDicts.
-3. Exposes :data:`CAREER_CATALOG` for tools that need an in-memory list, plus
-   :func:`load_career_catalog` for callers that want to refresh from disk.
+3. Exposes :func:`load_career_catalog` for callers that want to refresh from disk,
+   and :func:`reload_career_catalog` to clear the cache.
 
 Adding a new career = adding one ``.md`` file. No Python changes needed.
 
 Fallback behavior: if no ``.md`` files are found (e.g. during tests with a
 stub catalog), returns an empty list. Tools handle the empty case gracefully.
+
+This module was extracted from ``src/tools/catalog.py`` during the
+handler/tool refactor (Sprint 4 §4.5). It contains pure data loading logic
+with no LLM or @tool dependencies.
 """
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 from typing import TypedDict
 
 import yaml
-from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
 # Default location for the career catalog. Resolved relative to the repo root
 # so it works both in local dev and inside AgentCore containers.
-CATALOG_DIR = Path(__file__).resolve().parents[2] / "data" / "careers"
+CATALOG_DIR = Path(__file__).resolve().parents[3] / "data" / "careers"
 
 
 class Career(TypedDict):
@@ -44,6 +46,9 @@ class Career(TypedDict):
     body: str  # Markdown body (description + resources), may be empty
 
 
+_CACHE: list[Career] | None = None
+
+
 def _parse_career_file(path: Path) -> Career | None:
     """Parse a single ``.md`` career file. Returns None on malformed input."""
     try:
@@ -56,7 +61,6 @@ def _parse_career_file(path: Path) -> Career | None:
         logger.warning("Career file %s missing YAML frontmatter; skipping", path.name)
         return None
 
-    # Split frontmatter from body. The closing '---' must be on its own line.
     parts = text.split("---", 2)
     if len(parts) < 3:
         logger.warning("Career file %s has malformed frontmatter; skipping", path.name)
@@ -95,82 +99,30 @@ def load_career_catalog(directory: Path | None = None) -> list[Career]:
     Returns an empty list if the directory does not exist or contains no
     valid career files. Sort by ``id`` so the catalog order is stable.
     """
+    global _CACHE
+    if _CACHE is not None:
+        return list(_CACHE)
+
     catalog_dir = directory or CATALOG_DIR
     if not catalog_dir.exists():
         logger.warning("Career catalog directory %s does not exist", catalog_dir)
+        _CACHE = []
         return []
 
     careers: list[Career] = []
-    for path in sorted(catalog_dir.glob("*.md")):
-        # Skip the README — it documents the schema, not a career.
-        if path.name.lower() == "readme.md":
+    for md_file in sorted(catalog_dir.glob("*.md")):
+        if md_file.name.lower() == "readme.md":
             continue
-        career = _parse_career_file(path)
-        if career is not None:
-            careers.append(career)
-
-    logger.info("Loaded %d careers from %s", len(careers), catalog_dir)
-    return careers
-
-
-@lru_cache
-def _get_cached_catalog() -> tuple[Career, ...]:
-    """Cached tuple version of the catalog for fast access.
-
-    Tests can call :func:`reload_career_catalog` to invalidate this cache.
-    """
-    return tuple(load_career_catalog())
+        parsed = _parse_career_file(md_file)
+        if parsed is not None:
+            careers.append(parsed)
+    careers.sort(key=lambda c: c["id"])
+    _CACHE = careers
+    return list(_CACHE)
 
 
-def reload_career_catalog() -> list[Career]:
-    """Force a fresh load from disk and return the new catalog.
-
-    Useful in tests and in admin endpoints that allow runtime catalog edits.
-    """
-    _get_cached_catalog.cache_clear()
-    return list(_get_cached_catalog())
-
-
-# Public, in-memory catalog exposed to the rest of the codebase.
-# `list(...)` so callers get a mutable copy and can't mutate the cache tuple.
-CAREER_CATALOG: list[Career] = list(_get_cached_catalog())
-
-
-@tool
-def search_careers(query: str, field: str | None = None) -> list[Career]:
-    """Search the career catalog by keyword or field.
-
-    Performs simple text matching on the local catalog. In production,
-    this will use pgvector semantic search.
-
-    Args:
-        query: Search query (career name, skill, or description keywords)
-        field: Optional filter by field (e.g., 'Tecnología', 'Salud')
-    """
-    query_lower = query.lower()
-    results: list[Career] = []
-
-    for career in CAREER_CATALOG:
-        searchable = " ".join(
-            [
-                career["name"].lower(),
-                career["outlook"].lower(),
-                career["body"].lower(),
-                career["field"].lower(),
-            ]
-        )
-
-        if query_lower in searchable and (
-            field is None or field.lower() in career["field"].lower()
-        ):
-            results.append(career)
-
-    # If no exact match, return all careers in the field (if specified)
-    if not results and field:
-        results = [c for c in CAREER_CATALOG if field.lower() in c["field"].lower()]
-
-    # If still no results, return first 5 as suggestions
-    if not results:
-        results = CAREER_CATALOG[:5]
-
-    return results
+def reload_career_catalog(directory: Path | None = None) -> list[Career]:
+    """Clear the cache and reload from disk. Useful for tests."""
+    global _CACHE
+    _CACHE = None
+    return load_career_catalog(directory)

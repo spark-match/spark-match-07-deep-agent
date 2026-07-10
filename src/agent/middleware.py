@@ -17,6 +17,7 @@ Both are added to the agent via the ``middleware=[...]`` argument to
 """
 
 import logging
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import AIMessage
@@ -56,7 +57,7 @@ class MaxTurnsMiddleware(AgentMiddleware):
     ``recursion_limit`` (we set a high value to let our guard fire first).
     """
 
-    def after_model(self, state: AgentState, runtime: object) -> dict | None:
+    def after_model(self, state: AgentState, runtime: object) -> dict[str, Any] | None:
         """Inspect messages after each model call; cap if too many."""
         settings = get_settings()
         cap = settings.max_turns
@@ -102,7 +103,7 @@ class AssessmentOnceMiddleware(AgentMiddleware):
     short-circuits repeats with a clear error message.
     """
 
-    def wrap_tool_call(self, request, handler):
+    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
         """Inspect the tool name; bypass if it's a repeat assessment call."""
         tool_call = request.tool_call
         if tool_call.get("name") != ASSESSMENT_TOOL_NAME:

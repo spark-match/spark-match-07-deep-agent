@@ -6,10 +6,10 @@ schema drift in the catalog itself surfaces as a test failure.
 
 from src.tools.catalog import (
     CATALOG_DIR,
-    _parse_career_file,
     load_career_catalog,
     reload_career_catalog,
 )
+from src.tools.catalog.loader import _parse_career_file
 
 
 class TestCareerCatalogLoader:
@@ -100,12 +100,14 @@ class TestReloadCatalog:
     """reload_career_catalog() must invalidate the cache."""
 
     def test_reload_returns_fresh_catalog(self, tmp_path, monkeypatch):
-        # Redirect CATALOG_DIR for this test only
-        monkeypatch.setattr("src.tools.catalog.CATALOG_DIR", tmp_path)
+        # Redirect CATALOG_DIR for this test only.
+        # CATALOG_DIR lives in src.tools.catalog.loader (after the
+        # handler/tool refactor in Sprint 4 §4.5).
+        monkeypatch.setattr("src.tools.catalog.loader.CATALOG_DIR", tmp_path)
         # Clear any prior cache from other tests
         reload_career_catalog()
 
-        # Empty dir → empty catalog
+        # Empty dir -> empty catalog
         assert load_career_catalog() == []
 
         # Add a career file
@@ -114,11 +116,8 @@ class TestReloadCatalog:
             encoding="utf-8",
         )
 
-        # Without reload, the lru_cache would still serve the empty list
-        # (this exercises the cache logic explicitly).
-        from src.tools.catalog import _get_cached_catalog
-
-        _get_cached_catalog.cache_clear()
-        careers = load_career_catalog()
+        # Without reload, the module-level _CACHE would still serve the empty list.
+        # reload_career_catalog() must invalidate it.
+        careers = reload_career_catalog()
         assert len(careers) == 1
         assert careers[0]["id"] == "new"

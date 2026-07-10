@@ -49,6 +49,10 @@ select = [
     "E", "F", "I", "UP", "B", "SIM",
     "ASYNC", "PT", "RET", "RUF",
 ]
+# RUF001/RUF002 (ambiguous characters in strings/docstrings) and RUF012
+# (mutable class attributes) are too noisy given existing patterns.
+# Re-enable once the codebase has been cleaned up.
+ignore = ["RUF001", "RUF002", "RUF012"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests use assert freely, allow long lines in test docstrings, and pytest fixtures
