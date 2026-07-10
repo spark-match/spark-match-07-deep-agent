@@ -1,34 +1,34 @@
-# CODEOWNERS — Spark Match Deep Agent
+# CODEOWNERS - Spark Match Deep Agent (08)
 #
-# Define quién revisa los PRs en cada área del repositorio. La última
-# coincidencia gana (GitHub evalúa de abajo hacia arriba).
-# Ver https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
-#
-# Política de aprobación (configurada en branch protection):
+# Politica de aprobacion (configurada en branch protection):
 #   - dev:  required_approving_review_count: 1
 #            require_code_owner_reviews: true
 #   - main: required_approving_review_count: 1
 #            require_code_owner_reviews: true
 #            require_last_push_approval: true
 #
-# CODE OWNER del repo: @spark-match/ai-devs
-#   Miembros: ahincho, nikolaiasencios, FabiTaparaQuispe
+# CODE OWNER del repo (catch-all): @spark-match/ai-devs
+#   Miembros: FabiTaparaQuispe, ahincho, nikolaiasencios
 #
-# Nota: el autor del PR no puede aprobar su propio PR, ni siquiera
-# siendo CODE OWNER (regla de GitHub). Por ejemplo, un PR abierto por
-# ahincho necesita la aprobación de nikolaiasencios o FabiTaparaQuispe.
+# Paths criticos (governance): @spark-match/product-owners
+#   - Decisiones arquitectonicas, onboarding, postmortems, docs raiz.
+#   - Miembros: dbarretol, FabiTaparaQuispe, ahincho
+#
+# Nota: el autor del PR no puede aprobar su propio PR, ni siquiera siendo
+# CODE OWNER (regla de GitHub). Por ejemplo, un PR abierto por ahincho
+# necesita la aprobacion de cualquier otro miembro del team.
 
 # =============================================================================
-# Catch-all: cualquier archivo no listado abajo
-# CODE OWNER: ai-devs (el equipo que desarrolla y mantiene el agente)
+# Catch-all: el equipo tecnico del repo es CODE OWNER del codigo
 # =============================================================================
 *                                          @spark-match/ai-devs
 
 # =============================================================================
-# Configuración de GitHub — CODEOWNERS, workflows, templates
-# Cambios en CI/CD y governance requieren revisión explícita de ai-devs
-# (sobrescribe el catch-all, sigue siendo ai-devs pero listada para
-#  visibilidad y futura extensión a un team diferente si se requiere).
+# Paths criticos: product-owners revisa governance y docs raiz
 # =============================================================================
-/.github/                                  @spark-match/ai-devs
-/.github/CODEOWNERS                        @spark-match/ai-devs
+/decisions/                                @spark-match/product-owners
+/onboarding/                               @spark-match/product-owners
+/postmortems/                              @spark-match/product-owners
+/README.md                                 @spark-match/product-owners
+/CONTRIBUTING.md                           @spark-match/product-owners
+/LICENSE                                   @spark-match/product-owners
