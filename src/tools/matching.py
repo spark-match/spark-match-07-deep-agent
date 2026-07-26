@@ -6,7 +6,7 @@ from src.tools.catalog import CAREER_CATALOG
 
 
 def _riasec_similarity(profile_code: str, career_code: str) -> float:
-    """Calculate RIASEC similarity score (0-100).
+    """Calculate RIASEC similarity score (0-1).
 
     Uses positional weighting: first letter = most important.
     Matches in same position score higher than matches in different positions.
@@ -23,9 +23,9 @@ def _riasec_similarity(profile_code: str, career_code: str) -> float:
                 else:
                     score += weights[j] * 5
 
-    # Normalize to 0-100
+    # Normalize to 0-1
     max_possible = sum(w * 10 for w in weights)
-    return round((score / max_possible) * 100, 1)
+    return round(score / max_possible, 4)
 
 
 @tool
@@ -51,7 +51,7 @@ def calculate_affinity(riasec_code: str, top_n: int = 5) -> list[dict]:
                 "career_riasec": career["riasec_profile"],
                 "field": career["field"],
                 "reason": (
-                    f"Tu perfil {riasec_code} tiene {score}% de afinidad con "
+                    f"Tu perfil {riasec_code} tiene {score} de afinidad con "
                     f"{career['name']} (perfil {career['riasec_profile']}). "
                     f"Campo: {career['field']}."
                 ),
