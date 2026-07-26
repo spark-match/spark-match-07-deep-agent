@@ -35,3 +35,4 @@
 /Makefile                                  @spark-match/ai-devs
 /pyproject.toml                            @spark-match/ai-devs
 /uv.lock                                   @spark-match/ai-devs
+/.gitignore                                @spark-match/ai-devs
