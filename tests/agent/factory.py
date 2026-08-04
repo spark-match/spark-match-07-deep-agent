@@ -41,6 +41,21 @@ class ToolCallingFakeChatModel(GenericFakeChatModel):
         return self
 
 
+class MessageCapturingFakeChatModel(ToolCallingFakeChatModel):
+    """Same as :class:`ToolCallingFakeChatModel`, but records every message
+    list it was actually invoked with — including whatever middleware (e.g.
+    ``SkillsMiddleware.wrap_model_call``) injected into the system message
+    before the request reached the model. Used to assert on real prompt
+    content rather than just on graph node presence.
+    """
+
+    captured_message_lists: list[list[Any]] = []
+
+    def _generate(self, messages: list[Any], *args: Any, **kwargs: Any) -> Any:
+        self.captured_message_lists.append(messages)
+        return super()._generate(messages, *args, **kwargs)
+
+
 def _looping_tool_call_messages(count: int, tool_name: str = "search_careers") -> list[AIMessage]:
     """Build ``count`` canned AIMessages that each call the same tool.
 
@@ -97,6 +112,20 @@ class TestAgentGraphStructure:
         nodes = agent.get_graph().nodes
         assert any("MaxTurnsMiddleware" in name for name in nodes)
 
+    def test_skills_middleware_is_wired_into_the_graph(self):
+        """Sprint 8, task 8.3 DoD: SkillsMiddleware must be in the stack.
+
+        Same regression-guard shape as MaxTurnsMiddleware above — a
+        ``skills=[...]`` argument silently dropped from the
+        ``create_deep_agent(...)`` call (or a broken backend wiring) would
+        otherwise only surface as a missing section in the rendered system
+        prompt, never as a construction-time error.
+        """
+        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
+        agent = create_spark_agent(model=fake)
+        nodes = agent.get_graph().nodes
+        assert any("SkillsMiddleware" in name for name in nodes)
+
     def test_custom_tools_and_subagent_delegation_are_bound(self):
         """The 4 project tools and the subagent 'task' tool must be bound."""
         fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
@@ -110,6 +139,36 @@ class TestAgentGraphStructure:
             "web_search",
             "task",  # deepagents' subagent-delegation tool
         }.issubset(tool_names)
+
+
+class TestSkillsAreLoadedIntoTheSystemPrompt:
+    """Sprint 8, task 8.3: stronger end-to-end check than node presence
+    alone (AGENTS.md §5.3 — assertions on middleware must verify the
+    compiled graph's actual behavior). Captures the real message list the
+    model was invoked with and asserts the vocational_advisor skill's
+    name/description made it into the system message, proving the whole
+    chain (FilesystemBackend scoped to skills/ -> CompositeBackend routing
+    -> SkillsMiddleware.wrap_model_call) works, not just that a node with
+    the right name exists.
+    """
+
+    async def test_vocational_advisor_skill_appears_in_the_system_message(self):
+        fake = MessageCapturingFakeChatModel(messages=iter([AIMessage(content="hola")]))
+        agent = create_spark_agent(model=fake)
+
+        await agent.ainvoke(
+            {"messages": [HumanMessage(content="hola")]},
+            config={"configurable": {"thread_id": "skills-test"}},
+        )
+
+        assert fake.captured_message_lists, "model was never invoked"
+        system_messages = [
+            m for m in fake.captured_message_lists[0] if type(m).__name__ == "SystemMessage"
+        ]
+        assert system_messages, "no system message was sent to the model"
+        system_content = str(system_messages[0].content)
+        assert "vocational_advisor" in system_content
+        assert "RIASEC-based career matching" in system_content
 
 
 class TestMaxTurnsActuallyStopsTheGraph:
