@@ -847,14 +847,14 @@ def create_spark_agent(persistence: Persistence) -> CompiledStateGraph[Any, Any,
 
 Hoy `src/api/app.py` extrae `input_data.thread_id` **solo para el contador de budget**; nunca llega al grafo. `LangGraphAgent` sí lo inyecta en `config["configurable"]["thread_id"]` (línea ~82), pero sin checkpointer no servía de nada. Con checkpointer ya funciona; **verificar con un test de dos turnos** que el segundo turno ve el primero.
 
-**DoD Sprint 6**
-- [ ] Test: dos requests HTTP consecutivos con el mismo `thread_id` → el agente recuerda el nombre del estudiante del turno 1.
-- [ ] Test: dos `thread_id` distintos con el mismo `user_id` → el perfil RIASEC persiste entre ambos (memoria entre sesiones).
-- [ ] Test: dos `user_id` distintos → aislamiento total, `user_a` no ve nada de `user_b`.
-- [ ] `SPARK_PERSISTENCE_BACKEND=memory|sqlite` funcionan **sin AWS**. `postgres` cubierto con `testcontainers` o marcado `@pytest.mark.integration`.
-- [ ] `src/memory/profile_manager.py` deja de ser código muerto; hay test que lo ejerce.
-- [ ] `langmem` deja de ser dependencia fantasma.
-- [ ] README actualizado: quitar la afirmación falsa de persistencia y describir la real.
+**DoD Sprint 6** — cerrado 2026-08-04 (PRs #31, #32, #33)
+- [x] Test: dos requests HTTP consecutivos con el mismo `thread_id` → el agente recuerda el nombre del estudiante del turno 1 (`TestCheckpointerPersistsConversationAcrossInvocations`, PR #32).
+- [x] Test: el perfil persiste independientemente del `thread_id` — `ProfileHydrationMiddleware` lee del namespace `("spark-match", user_id, "profile")`, que no incluye `thread_id` (`tests/agent/memory_middleware.py`, PR #33). La extracción real vía langmem no se re-testea (delegada a la librería); se testea que la lectura funciona con cualquier perfil ya presente en el store.
+- [ ] ~~Test: dos `user_id` distintos → aislamiento total~~ — **diferido a Sprint 7 explícitamente**. Hoy `user_id` es un placeholder fijo (`src/agent/user_context.DEFAULT_USER_ID`) hasta que el JWT real esté disponible; un test de aislamiento hoy solo probaría que un placeholder es igual a sí mismo, no aislamiento real. El namespacing SÍ existe estructuralmente (partición por `user_id` en todos los namespaces), listo para recibir el valor real sin cambios de forma.
+- [x] `SPARK_PERSISTENCE_BACKEND=memory|sqlite` funcionan **sin AWS** (PR #31). `postgres` sigue sin implementar (tarea 6.A.3, DSN vía Secrets Manager) — no bloqueante para el TFP (hard rule #7).
+- [x] `src/memory/profile_manager.py` deja de ser código muerto; `build_profile_manager`/`build_reflection_executor` tienen test (`tests/memory/profile_manager.py`, PR #33).
+- [x] `langmem` deja de ser dependencia fantasma — usado en `profile_manager.py`, `memory_middleware.py` y las tools `manage_prefs`/`search_memory` en `factory.py`.
+- [x] README actualizado: fila de persistencia añadida, claim de `langmem` corregido a "activo desde Sprint 6".
 
 ---
 

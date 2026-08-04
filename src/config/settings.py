@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     sqlite_path: str = ".spark-match/checkpoints.sqlite"
     postgres_dsn: SecretStr | None = None
 
+    # --- Long-term memory (Sprint 6, tasks 6.D/6.E) ---
+    # Delay before the background StudentProfile extraction (langmem
+    # ReflectionExecutor) actually runs, debounced from the end of a turn.
+    # Keeps the profile manager from re-running on every single message in a
+    # fast back-and-forth exchange.
+    reflection_delay_seconds: int = 30
+
     @property
     def is_local(self) -> bool:
         return self.environment == Environment.LOCAL
@@ -114,6 +121,13 @@ class Settings(BaseSettings):
         if self.model_provider == "bedrock":
             return f"bedrock:{self.model_id}"
         return f"{self.model_provider}:{self.model_id}"
+
+    @property
+    def fast_model_string(self) -> str:
+        """Build the fast/cheap model string (Haiku) for structured extraction."""
+        if self.model_provider == "bedrock":
+            return f"bedrock:{self.fast_model_id}"
+        return f"{self.model_provider}:{self.fast_model_id}"
 
 
 @lru_cache

@@ -1,17 +1,28 @@
 """Profile memory manager — extracts StudentProfile from conversations using langmem.
 
 The profile manager analyzes conversation messages and progressively fills
-the StudentProfile schema. It uses langmem's create_memory_manager which:
-1. Reads the conversation history
-2. Identifies vocational-relevant information
-3. Updates the structured profile incrementally
-4. Persists across sessions via LangGraph Store
+the StudentProfile schema, persisting it directly into the LangGraph
+:class:`~langgraph.store.base.BaseStore` (task 6.D). Extraction runs in the
+background via :class:`~langmem.ReflectionExecutor` (task 6.E's
+``ProfilePersistMiddleware``) so it never adds latency to a turn.
 """
 
-from langmem import create_memory_manager
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from langmem import ReflectionExecutor, create_memory_store_manager
 
 from src.config import get_settings
 from src.models.profile import StudentProfile
+
+if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore
+
+# Namespace template: langmem substitutes ``{user_id}`` from
+# ``config["configurable"]["user_id"]`` at call time (see
+# ``src.agent.memory_middleware.ProfilePersistMiddleware``).
+PROFILE_NAMESPACE = ("spark-match", "{user_id}", "profile")
 
 EXTRACTION_INSTRUCTIONS = """\
 You are analyzing a vocational guidance conversation to extract a student's profile.
@@ -50,24 +61,49 @@ You are analyzing a vocational guidance conversation to extract a student's prof
 """
 
 
-def create_profile_manager() -> object:
-    """Create a langmem memory manager configured for StudentProfile extraction.
+def build_profile_manager(store: BaseStore) -> object:
+    """Create a langmem store manager configured for StudentProfile extraction.
 
-    Returns a callable that accepts conversation messages and returns
-    the extracted/updated StudentProfile.
+    Unlike ``create_memory_manager`` (the previous, unused implementation),
+    ``create_memory_store_manager`` writes directly into ``store`` under
+    :data:`PROFILE_NAMESPACE`, so the extracted profile survives across
+    sessions without any extra glue code.
 
-    Usage:
-        manager = create_profile_manager()
-        memories = manager.invoke({"messages": conversation_messages})
-        # memories[0].content is a StudentProfile instance
+    Args:
+        store: The LangGraph store to persist the extracted profile into.
+            Comes from :func:`src.persistence.build_persistence` in
+            production; any ``BaseStore`` (e.g. ``InMemoryStore``) works in
+            tests.
+
+    Uses ``settings.fast_model_string`` (Haiku): structured extraction is a
+    cheap, low-stakes task compared to the main conversation model.
     """
     settings = get_settings()
 
-    manager = create_memory_manager(
-        settings.model_string,
+    return create_memory_store_manager(
+        settings.fast_model_string,
         schemas=[StudentProfile],
         instructions=EXTRACTION_INSTRUCTIONS,
-        enable_inserts=False,  # Single profile per user, update in-place
+        namespace=PROFILE_NAMESPACE,
+        enable_inserts=False,  # Single profile per user, update in-place.
+        store=store,
     )
 
-    return manager  # noqa: RET504 — kept as a local for test inspection
+
+def build_reflection_executor(store: BaseStore) -> ReflectionExecutor:
+    """Wrap :func:`build_profile_manager` in a background reflection executor.
+
+    ``ProfilePersistMiddleware.after_agent`` calls ``.submit(...)`` on the
+    result of this function, debounced by
+    ``settings.reflection_delay_seconds``, so extraction never blocks the
+    user-facing turn.
+    """
+    return ReflectionExecutor(build_profile_manager(store), store=store)
+
+
+__all__ = [
+    "EXTRACTION_INSTRUCTIONS",
+    "PROFILE_NAMESPACE",
+    "build_profile_manager",
+    "build_reflection_executor",
+]

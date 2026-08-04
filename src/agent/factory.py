@@ -12,7 +12,14 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
+from langmem import create_manage_memory_tool, create_search_memory_tool
 
+from src.agent.backends import build_backend
+from src.agent.memory_middleware import (
+    MemorySeedMiddleware,
+    ProfileHydrationMiddleware,
+    ProfilePersistMiddleware,
+)
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
@@ -28,11 +35,17 @@ from src.tools import (
     web_search,
 )
 
+# Preference namespace: langmem substitutes "{user_id}" from
+# config["configurable"]["user_id"] at call time — see
+# src.agent.user_context for the Sprint 6 placeholder / Sprint 7 real value.
+PREFS_NAMESPACE = ("spark-match", "{user_id}", "prefs")
+
 
 def create_spark_agent(
     model: str | BaseChatModel | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     store: BaseStore | None = None,
+    reflection_executor: Any | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create and configure the Spark Match Deep Agent.
 
@@ -51,6 +64,15 @@ def create_spark_agent(
         store: Long-term memory (profile, preferences, memory files),
             partitioned per ``user_id`` once Sprint 7 wires real auth.
             Same ``None``-safe behavior as ``checkpointer``.
+        reflection_executor: Background ``StudentProfile`` extraction
+            worker (:func:`src.memory.build_reflection_executor`).
+            Deliberately **not** built inside this factory: its
+            ``LocalReflectionExecutor`` spawns a non-daemon worker thread on
+            construction that only ``.shutdown()`` can stop, so its
+            lifecycle must be owned by whoever can guarantee a matching
+            shutdown call (the FastAPI lifespan in production; nothing in
+            most tests, hence the ``None`` default). Ignored when ``store``
+            is ``None`` — there's nowhere durable to persist into anyway.
 
     Architecture:
     - Coordinator (this agent): routes user intent, manages conversation flow.
@@ -58,10 +80,13 @@ def create_spark_agent(
     - Matching subagent: calculates affinity and ranks careers.
     - Planning subagent: generates personalized action plans.
 
-    Memory:
-    - langmem extracts StudentProfile from conversations in the background.
-    - Profile persists across sessions via the LangGraph Store.
-    - Each subagent has access to the extracted profile context.
+    Memory (Sprint 6):
+    - ``/memories/AGENTS.md`` is seeded per user on first contact and is
+      readable/writable by the agent itself via the composite backend.
+    - langmem extracts StudentProfile from conversations in the background
+      and injects it back into the system prompt on later turns.
+    - ``manage_prefs``/``search_memory`` tools let the agent record & recall
+      user preferences (language, tone) directly.
 
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
@@ -78,6 +103,36 @@ def create_spark_agent(
         [ASSESSMENT_SUBAGENT, MATCHING_SUBAGENT, PLANNING_SUBAGENT],
     )
 
+    manage_prefs = create_manage_memory_tool(
+        namespace=PREFS_NAMESPACE,
+        actions_permitted=("create", "update"),  # no delete: avoid accidental wipes
+    )
+    search_memory = create_search_memory_tool(namespace=PREFS_NAMESPACE)
+    # KNOWN GAP (closes in Sprint 7): both tools resolve "{user_id}" from
+    # config["configurable"]["user_id"] at call time. Nothing in the
+    # request path sets that key today — AG-UI only forwards thread_id, and
+    # context_schema=AgentContext (which would inject it) is Sprint 7 scope.
+    # If the model actually calls manage_prefs/search_memory before then,
+    # langmem raises a clear ConfigurationError rather than silently
+    # corrupting a namespace; still, don't expect these two tools to work
+    # end-to-end until Sprint 7 wires real auth context.
+
+    # deepagents' own memory=[...] middleware eagerly downloads the listed
+    # paths through the backend on every turn, which needs a real store
+    # behind the /memories/ route. Without one (store=None, e.g. most unit
+    # tests) it would AttributeError trying to read from a None store, so
+    # both the memory-seeded system prompt and our own memory middlewares
+    # are opt-in on store being present.
+    memory_sources = ["/memories/AGENTS.md"] if store is not None else None
+    middleware: list[Any] = []
+    if store is not None:
+        middleware.append(MemorySeedMiddleware())
+        middleware.append(ProfileHydrationMiddleware())
+    middleware.append(MaxTurnsMiddleware())
+    middleware.append(AssessmentOnceMiddleware())
+    if store is not None:
+        middleware.append(ProfilePersistMiddleware(reflection_executor))
+
     agent = create_deep_agent(
         model=model if model is not None else settings.model_string,
         tools=[
@@ -85,16 +140,17 @@ def create_spark_agent(
             search_careers,
             calculate_affinity,
             web_search,
+            manage_prefs,
+            search_memory,
         ],
         subagents=subagents,
         system_prompt=SYSTEM_PROMPT,
         name=settings.agent_name,
+        backend=build_backend() if store is not None else None,
+        memory=memory_sources,
         checkpointer=checkpointer,
         store=store,
-        middleware=[
-            MaxTurnsMiddleware(),
-            AssessmentOnceMiddleware(),
-        ],
+        middleware=middleware,
     )
 
     return agent  # noqa: RET504
