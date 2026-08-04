@@ -122,7 +122,11 @@ class TestNoFalsePositivesOnLegitimateMessages:
 
     Drives the heuristic against every actual user message in the eval
     dataset (evals/dataset.jsonl) rather than a hand-picked list, so this
-    test stays honest as the dataset grows (Sprint 9, task 9.B.1).
+    test stays honest as the dataset grows (Sprint 9, task 9.B.1). Only
+    LEGITIMATE cases count -- ``expected_status="blocked_injection"``
+    cases are *attacks* (they must trip the guardrail, not pass through
+    silently), so they are exercised by
+    ``TestDetectPromptInjection`` above and excluded here.
     """
 
     def test_no_eval_dataset_user_message_triggers_the_guardrail(self):
@@ -131,6 +135,8 @@ class TestNoFalsePositivesOnLegitimateMessages:
         cases = load_dataset()
         false_positives = []
         for case in cases:
+            if case.expected_status == "blocked_injection":
+                continue
             for turn in case.turns:
                 if turn.role != "user":
                     continue
