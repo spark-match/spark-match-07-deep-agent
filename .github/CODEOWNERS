@@ -1,34 +1,41 @@
 # CODEOWNERS - Spark Match Deep Agent (08)
 #
-# Politica de aprobacion (configurada en branch protection):
+# Politica de aprobacion (configurada via ruleset):
 #   - dev:  required_approving_review_count: 1
-#            require_code_owner_reviews: true
+#            require_code_owner_review: true
 #   - main: required_approving_review_count: 1
-#            require_code_owner_reviews: true
-#            require_last_push_approval: true
+#            require_code_owner_review: true
 #
-# CODE OWNER del repo (catch-all): @spark-match/ai-devs
+# CODE OWNER del repo: @spark-match/ai-devs
 #   Miembros: FabiTaparaQuispe, ahincho, nikolaiasencios
 #
 # Paths criticos (governance): @spark-match/product-owners
-#   - Decisiones arquitectonicas, onboarding, postmortems, docs raiz.
-#   - Miembros: dbarretol, FabiTaparaQuispe, ahincho
 #
-# Nota: el autor del PR no puede aprobar su propio PR, ni siquiera siendo
-# CODE OWNER (regla de GitHub). Por ejemplo, un PR abierto por ahincho
-# necesita la aprobacion de cualquier otro miembro del team.
+# Convencion: explicit paths, no catch-all.
 
-# =============================================================================
-# Catch-all: el equipo tecnico del repo es CODE OWNER del codigo
-# =============================================================================
-*                                          @spark-match/ai-devs
-
-# =============================================================================
-# Paths criticos: product-owners revisa governance y docs raiz
-# =============================================================================
 /decisions/                                @spark-match/product-owners
 /onboarding/                               @spark-match/product-owners
 /postmortems/                              @spark-match/product-owners
-/README.md                                 @spark-match/product-owners
-/CONTRIBUTING.md                           @spark-match/product-owners
-/LICENSE                                   @spark-match/product-owners
+/README.md                                 @spark-match/ai-devs @spark-match/product-owners
+/CONTRIBUTING.md                           @spark-match/ai-devs @spark-match/product-owners
+/LICENSE                                   @spark-match/ai-devs @spark-match/product-owners
+/AGENTS.md                                 @spark-match/ai-devs @spark-match/product-owners
+/ROADMAP-2026-08.md                        @spark-match/ai-devs @spark-match/product-owners
+
+/.github/                                  @spark-match/ai-devs
+/data/                                     @spark-match/ai-devs
+/evals/                                    @spark-match/ai-devs
+/skills/                                   @spark-match/ai-devs
+/src/                                      @spark-match/ai-devs
+/tests/                                    @spark-match/ai-devs
+
+/.dockerignore                             @spark-match/ai-devs
+/.env.example                              @spark-match/ai-devs
+/.python-version                           @spark-match/ai-devs
+/CHANGELOG.md                              @spark-match/ai-devs
+/IMPROVEMENTS.md                           @spark-match/ai-devs
+/Makefile                                  @spark-match/ai-devs
+/pyproject.toml                            @spark-match/ai-devs
+/uv.lock                                   @spark-match/ai-devs
+
+/.gitignore                                @spark-match/ai-devs
