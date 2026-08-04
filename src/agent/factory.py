@@ -16,6 +16,7 @@ from langgraph.store.base import BaseStore
 from langmem import create_manage_memory_tool, create_search_memory_tool
 
 from src.agent.backends import SKILLS_ROOT, build_backend
+from src.agent.content_filter import ContentFilterMiddleware
 from src.agent.guardrails import GuardrailsMiddleware
 from src.agent.memory_middleware import (
     MemorySeedMiddleware,
@@ -156,7 +157,7 @@ def create_spark_agent(
       (production); ignored for ``BaseChatModel`` overrides (test fakes),
       which don't consume it.
 
-    Guardrails (Sprint 9, task 9.A.1):
+    Guardrails (Sprint 9, tasks 9.A.1/9.A.3):
     - ``GuardrailsMiddleware`` runs first (``before_model``) on every turn
       and blocks prompt-injection / jailbreak attempts before the model is
       ever invoked — no tokens spent on a request that's going to be
@@ -165,6 +166,12 @@ def create_spark_agent(
       ``wrap_model_call`` hook the roadmap's wording literally suggests
       (that combination doesn't exist — ``jump_to`` isn't supported by
       ``wrap_model_call``, only by ``before_model``/``after_model``).
+    - ``ContentFilterMiddleware`` runs second (also ``before_model``,
+      chained after ``GuardrailsMiddleware`` — cheaper checks first) and
+      classifies the turn with a Haiku call (Option A from the roadmap —
+      confirmed with the user; Option B needs an IAM permission that
+      doesn't exist), fail-open on any classifier error. See
+      ``src/agent/content_filter.py``.
 
     PII redaction (Sprint 9, task 9.A.2):
     - ``PIIRedactionMiddleware`` strips email/phone/DNI occurrences from
@@ -229,7 +236,10 @@ def create_spark_agent(
     # both the memory-seeded system prompt and our own memory middlewares
     # are opt-in on store being present.
     memory_sources = ["/memories/AGENTS.md"] if store is not None else None
-    middleware: list[Any] = [GuardrailsMiddleware()]
+    middleware: list[Any] = [
+        GuardrailsMiddleware(),
+        ContentFilterMiddleware(classifier_model=fast_model_resolved),
+    ]
     if store is not None:
         middleware.append(MemorySeedMiddleware())
         middleware.append(ProfileHydrationMiddleware())
