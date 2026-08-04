@@ -7,14 +7,8 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from deepagents import create_deep_agent
-
-# deepagents.graph has no __all__, and deepagents ships py.typed, so mypy's
-# strict implicit-reexport check flags this as "not explicitly exported"
-# even though resolve_model is genuinely defined there (verified via
-# runtime introspection, not guessed) and is exactly what create_deep_agent
-# itself uses internally to turn a model string into a BaseChatModel.
-from deepagents.graph import resolve_model  # type: ignore[attr-defined]
 from deepagents.middleware.subagents import SubAgent
+from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
@@ -49,6 +43,33 @@ from src.tools import (
 # JWT since Sprint 7 (src.api.app.ag_ui_endpoint), src.agent.user_context
 # ("local-user") for direct graph invocation without going through /ag-ui.
 PREFS_NAMESPACE = ("spark-match", "{user_id}", "prefs")
+
+
+def _resolve_model(model: str | BaseChatModel, *, max_tokens: int) -> BaseChatModel:
+    """Resolve a model spec to a ``BaseChatModel``, applying ``max_tokens``.
+
+    ``BaseChatModel`` instances (test fakes, e.g. ``GenericFakeChatModel``)
+    pass through unchanged — ``max_tokens`` only applies to string specs
+    resolved here.
+
+    This mirrors deepagents' own model resolution
+    (``deepagents._models.resolve_model``, re-exported without ``__all__``
+    from ``deepagents.graph``, hence "mirrors" rather than "wraps": its
+    signature is ``resolve_model(model) -> BaseChatModel`` with no kwargs
+    parameter to thread ``max_tokens`` through) for the ``BaseChatModel``
+    passthrough and the string -> ``init_chat_model`` resolution, but
+    deliberately does **not** replicate its provider-profile step
+    (``deepagents.profiles``, a beta API): its only built-in registrations
+    today are OpenAI's Responses API default and OpenRouter attribution
+    headers, neither of which applies to this project (Bedrock only) —
+    confirmed empirically, not assumed:
+    ``apply_provider_profile("bedrock:...", {"max_tokens": 2048})``
+    returns ``{"max_tokens": 2048}`` unchanged, i.e. a no-op passthrough
+    for every spec this project actually uses.
+    """
+    if isinstance(model, BaseChatModel):
+        return model
+    return init_chat_model(model, max_tokens=max_tokens)
 
 
 def create_spark_agent(
@@ -127,6 +148,11 @@ def create_spark_agent(
       clarifications) and ``model`` (Sonnet — everything else, including
       any turn the heuristic doesn't recognize). See
       ``src/agent/router_middleware.py``.
+    - Both models are capped at ``settings.max_tokens`` (Sprint 8, task
+      8.6 — POC v2 lesson 9: bounding generation length reduces latency
+      on plan-generation turns). Applied when resolving a string spec
+      (production); ignored for ``BaseChatModel`` overrides (test fakes),
+      which don't consume it.
 
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
@@ -139,15 +165,17 @@ def create_spark_agent(
     # Resolve both models up front (BaseChatModel, not bare strings): the
     # router middleware assigns whichever one it picks directly onto
     # ModelRequest.model, so both must already be real model instances by
-    # the time IntentRouterMiddleware is constructed below.
-    # resolve_model is deepagents' own string->BaseChatModel resolution
-    # (what create_deep_agent uses internally for its own `model=`
-    # argument) — reusing it keeps both models resolved identically.
-    strong_model = resolve_model(model if model is not None else settings.model_string)
-    fast_model_resolved = resolve_model(
+    # the time IntentRouterMiddleware is constructed below. Sprint 8, task
+    # 8.6: max_tokens is threaded through both (see _resolve_model).
+    strong_model = _resolve_model(
+        model if model is not None else settings.model_string,
+        max_tokens=settings.max_tokens,
+    )
+    fast_model_resolved = _resolve_model(
         fast_model
         if fast_model is not None
-        else (model if model is not None else settings.fast_model_string)
+        else (model if model is not None else settings.fast_model_string),
+        max_tokens=settings.max_tokens,
     )
 
     # SubAgent is a TypedDict; mypy sees plain dict[str, Sequence[object]] from

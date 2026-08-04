@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from src.agent.factory import create_spark_agent
+from src.agent.factory import _resolve_model, create_spark_agent
 
 
 class ToolCallingFakeChatModel(GenericFakeChatModel):
@@ -81,6 +81,48 @@ def _clean_settings_cache():
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+class TestResolveModel:
+    """Sprint 8, task 8.6: max_tokens threaded through model resolution."""
+
+    def test_base_chat_model_passes_through_unchanged(self):
+        """Test fakes (BaseChatModel instances) must not be touched --
+        max_tokens only applies to string specs."""
+        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
+        resolved = _resolve_model(fake, max_tokens=2048)
+        assert resolved is fake
+
+    def test_string_spec_forwards_max_tokens_to_init_chat_model(self, monkeypatch):
+        """Real resolution path (production): a string spec must reach
+        init_chat_model with max_tokens set.
+
+        Monkeypatches init_chat_model itself rather than actually
+        constructing a ChatBedrock: that constructor validates AWS
+        region/credentials eagerly (a real pydantic ValidationError, not
+        just at invocation time) -- confirmed the hard way, by a CI run
+        that had no ambient AWS config and failed, after this same
+        assertion passed locally on a machine with a configured AWS
+        profile/region. Actually building a Bedrock client here would
+        make this test depend on the machine's AWS configuration, which
+        violates the "no AWS needed to build" requirement (AGENTS.md
+        hard rule #7) this test is supposed to help guarantee, not risk.
+        """
+        import src.agent.factory as factory_module
+
+        captured: dict[str, object] = {}
+
+        def fake_init_chat_model(model, **kwargs):
+            captured["model"] = model
+            captured["kwargs"] = kwargs
+            return ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
+
+        monkeypatch.setattr(factory_module, "init_chat_model", fake_init_chat_model)
+
+        _resolve_model("bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0", max_tokens=777)
+
+        assert captured["model"] == "bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        assert captured["kwargs"] == {"max_tokens": 777}
 
 
 class TestAgentGraphStructure:

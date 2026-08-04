@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # Cheaper/faster model for low-stakes routing decisions (Sprint 8 router).
     fast_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     aws_region: str = "us-east-1"
+    # POC v2 lesson 9 (Sprint 8, task 8.6): capping generation length
+    # reduces latency on plan-generation turns without a quality loss for
+    # this agent's response shape (conversational + structured tool
+    # output, not long-form essays). Applies to both model/fast_model.
+    max_tokens: int = 2048
 
     # --- Agent Configuration ---
     agent_name: str = "spark-match-advisor"
