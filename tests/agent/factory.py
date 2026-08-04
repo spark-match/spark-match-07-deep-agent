@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 
+from src.agent.content_filter import CANONICAL_UNSAFE_CONTENT_REFUSAL
 from src.agent.factory import _resolve_model, create_spark_agent
 from src.agent.guardrails import CANONICAL_INJECTION_REFUSAL
 
@@ -181,6 +182,13 @@ class TestAgentGraphStructure:
         nodes = agent.get_graph().nodes
         assert any("GuardrailsMiddleware" in name for name in nodes)
 
+    def test_content_filter_middleware_is_wired_into_the_graph(self):
+        """Sprint 9, task 9.A.3: same regression-guard shape."""
+        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
+        agent = create_spark_agent(model=fake)
+        nodes = agent.get_graph().nodes
+        assert any("ContentFilterMiddleware" in name for name in nodes)
+
     def test_skills_middleware_is_wired_into_the_graph(self):
         """Sprint 8, task 8.3 DoD: SkillsMiddleware must be in the stack.
 
@@ -222,7 +230,13 @@ class TestSkillsAreLoadedIntoTheSystemPrompt:
     """
 
     async def test_vocational_advisor_skill_appears_in_the_system_message(self):
-        fake = MessageCapturingFakeChatModel(messages=iter([AIMessage(content="hola")]))
+        # Two fake responses: one for ContentFilterMiddleware's classification
+        # call (Sprint 9, task 9.A.3 — always invoked once per turn before the
+        # strong model) and one for the strong model itself. Same iteration
+        # pattern as the router/guardrails/turns tests below.
+        fake = MessageCapturingFakeChatModel(
+            messages=iter([AIMessage(content="hola"), AIMessage(content="hola")])
+        )
         agent = create_spark_agent(model=fake)
 
         await agent.ainvoke(
@@ -231,9 +245,21 @@ class TestSkillsAreLoadedIntoTheSystemPrompt:
         )
 
         assert fake.captured_message_lists, "model was never invoked"
-        system_messages = [
-            m for m in fake.captured_message_lists[0] if type(m).__name__ == "SystemMessage"
-        ]
+        # Skip the ContentFilterMiddleware classification call (it sends only
+        # the formatted prompt as a single HumanMessage, not the full
+        # conversation) — the assertion below is about the strong model's
+        # system message, so the second invocation is the relevant one.
+        # Same accounting as the per-turn two-call ordering the router /
+        # guardrail tests above do with extra AIMessage replies.
+        strong_model_call = next(
+            (
+                lst
+                for lst in fake.captured_message_lists
+                if any(type(m).__name__ == "SystemMessage" for m in lst)
+            ),
+            [],
+        )
+        system_messages = [m for m in strong_model_call if type(m).__name__ == "SystemMessage"]
         assert system_messages, "no system message was sent to the model"
         system_content = str(system_messages[0].content)
         assert "vocational_advisor" in system_content
@@ -262,7 +288,14 @@ class TestIntentRouterSelectsTheModelPerTurn:
     """
 
     async def test_greeting_turn_is_answered_by_the_fast_model(self):
-        fast = ToolCallingFakeChatModel(messages=iter([AIMessage(content="FAST_MODEL_REPLY")]))
+        # Fast fake needs two scripted responses: one for the ContentFilter
+        # classification call (always fires before the strong model in Sprint
+        # 9, task 9.A.3) and one for the IntentRouter override to fast.
+        fast = ToolCallingFakeChatModel(
+            messages=iter(
+                [AIMessage(content="FAST_MODEL_REPLY"), AIMessage(content="FAST_MODEL_REPLY")]
+            )
+        )
         strong = ToolCallingFakeChatModel(messages=iter([AIMessage(content="STRONG_MODEL_REPLY")]))
         agent = create_spark_agent(model=strong, fast_model=fast)
 
@@ -275,7 +308,14 @@ class TestIntentRouterSelectsTheModelPerTurn:
         assert ai_messages[-1].content == "FAST_MODEL_REPLY"
 
     async def test_complex_narrative_turn_is_answered_by_the_strong_model(self):
-        fast = ToolCallingFakeChatModel(messages=iter([AIMessage(content="FAST_MODEL_REPLY")]))
+        # Fast fake gets one extra response for the ContentFilter
+        # classification call before IntentRouter routes to the strong
+        # model and consumes the strong fake's response.
+        fast = ToolCallingFakeChatModel(
+            messages=iter(
+                [AIMessage(content="FAST_MODEL_REPLY"), AIMessage(content="FAST_MODEL_REPLY")]
+            )
+        )
         strong = ToolCallingFakeChatModel(messages=iter([AIMessage(content="STRONG_MODEL_REPLY")]))
         agent = create_spark_agent(model=strong, fast_model=fast)
 
@@ -333,7 +373,16 @@ class TestMaxTurnsActuallyStopsTheGraph:
         get_settings.cache_clear()
 
         fake = ToolCallingFakeChatModel(
-            messages=iter([AIMessage(content="Hola, ¿en qué te puedo ayudar?")]),
+            # Two scripted answers: one for the ContentFilter classification
+            # call (Sprint 9, task 9.A.3 — always fires before the strong
+            # model) and one for the strong model itself, which then
+            # MaxTurnsMiddleware cuts off on the cap.
+            messages=iter(
+                [
+                    AIMessage(content="Hola, ¿en qué te puedo ayudar?"),
+                    AIMessage(content="Hola, ¿en qué te puedo ayudar?"),
+                ]
+            ),
         )
         agent = create_spark_agent(model=fake)
 
@@ -371,7 +420,11 @@ class TestGuardrailsBlockInjectionBeforeTheModelRuns:
     async def test_clean_message_reaches_the_model_normally(self):
         """Sanity check: the guardrail is match-triggered, not unconditional
         — a real (non-exploding) fake model must still answer a clean turn."""
-        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="Hola!")]))
+        # Two scripted answers: ContentFilter consumes one for the
+        # classification call, the strong model answers with the second.
+        fake = ToolCallingFakeChatModel(
+            messages=iter([AIMessage(content="Hola!"), AIMessage(content="Hola!")])
+        )
         agent = create_spark_agent(model=fake)
 
         result = await agent.ainvoke(
@@ -381,6 +434,64 @@ class TestGuardrailsBlockInjectionBeforeTheModelRuns:
 
         ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
         assert ai_messages[-1].content == "Hola!"
+
+
+class TestContentFilterBlocksUnsafeContentBeforeTheStrongModelRuns:
+    """Sprint 9, task 9.A.3 — same end-to-end discipline as the injection
+    guardrail above (AGENTS.md SS5.3). ContentFilterMiddleware uses
+    fast_model for classification (the same model IntentRouterMiddleware
+    routes simple turns to — see factory.py), so an ExplodingFakeChatModel
+    as the *strong* model proves the classifier's own model call is
+    sufficient to block: the strong model is never reached at all.
+    """
+
+    async def test_unsafe_message_never_reaches_the_strong_model(self):
+        classifier_fast_model = ToolCallingFakeChatModel(
+            messages=iter([AIMessage(content='{"safe": false, "reason": "self-harm"}')])
+        )
+        exploding_strong_model = ExplodingFakeChatModel(messages=iter([]))
+        agent = create_spark_agent(model=exploding_strong_model, fast_model=classifier_fast_model)
+
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content="algo peligroso y preocupante")]},
+            config={"configurable": {"thread_id": "content-filter-block"}},
+        )
+
+        ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
+        assert len(ai_messages) == 1
+        assert ai_messages[-1].content == CANONICAL_UNSAFE_CONTENT_REFUSAL
+
+    async def test_safe_complex_message_still_reaches_the_strong_model(self):
+        """Sanity check: the filter is classification-triggered, not
+        unconditional. Uses the same narrative message already proven
+        (TestIntentRouterSelectsTheModelPerTurn) to route to the strong
+        model, so the fast fake only ever needs its one classification
+        response queued -- no coupling with what the router would also
+        need from it for an actual reply."""
+        classifier_fast_model = ToolCallingFakeChatModel(
+            messages=iter([AIMessage(content='{"safe": true, "reason": "vocational"}')])
+        )
+        strong_model = ToolCallingFakeChatModel(
+            messages=iter([AIMessage(content="STRONG_MODEL_REPLY")])
+        )
+        agent = create_spark_agent(model=strong_model, fast_model=classifier_fast_model)
+
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            "Resuelvo problemas lógicos mejor que la gente. "
+                            "Quiero ser científico de datos."
+                        )
+                    )
+                ]
+            },
+            config={"configurable": {"thread_id": "content-filter-pass"}},
+        )
+
+        ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
+        assert ai_messages[-1].content == "STRONG_MODEL_REPLY"
 
 
 class TestCheckpointerPersistsConversationAcrossInvocations:
@@ -396,10 +507,16 @@ class TestCheckpointerPersistsConversationAcrossInvocations:
     """
 
     async def test_two_turns_with_the_same_thread_id_share_history(self):
+        # Four scripted answers: two turns x (ContentFilter classification +
+        # strong model answer). Same per-turn accounting as the router /
+        # guardrail tests above, scaled to the two invocations this test
+        # makes.
         fake = ToolCallingFakeChatModel(
             messages=iter(
                 [
                     AIMessage(content="Hola! ¿En qué puedo ayudarte?"),
+                    AIMessage(content="Hola! ¿En qué puedo ayudarte?"),
+                    AIMessage(content="Claro, ya recuerdo lo que conversamos antes."),
                     AIMessage(content="Claro, ya recuerdo lo que conversamos antes."),
                 ]
             ),
@@ -424,8 +541,18 @@ class TestCheckpointerPersistsConversationAcrossInvocations:
         assert "Juan" in human_messages[0].content
 
     async def test_different_thread_ids_do_not_share_history(self):
+        # Four scripted answers: two turns x (ContentFilter classification +
+        # strong model answer). The assertions only care about the second
+        # invocation's reply, so the first two can be any placeholder.
         fake = ToolCallingFakeChatModel(
-            messages=iter([AIMessage(content="Hola!"), AIMessage(content="Hola, bienvenido!")]),
+            messages=iter(
+                [
+                    AIMessage(content="Hola!"),
+                    AIMessage(content="Hola!"),
+                    AIMessage(content="Hola, bienvenido!"),
+                    AIMessage(content="Hola, bienvenido!"),
+                ]
+            ),
         )
         checkpointer = InMemorySaver()
         agent = create_spark_agent(model=fake, checkpointer=checkpointer)
