@@ -1,0 +1,164 @@
+"""Tests for the heuristic intent classifier (Sprint 8, task 8.4)."""
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+from src.agent.intent import FAST_INTENTS, classify_intent
+
+
+def _human(text: str) -> HumanMessage:
+    return HumanMessage(content=text)
+
+
+def _ai(text: str) -> AIMessage:
+    return AIMessage(content=text)
+
+
+class TestClassifyIntentGreeting:
+    def test_plain_greeting(self):
+        assert classify_intent([_human("Hola")]) == "greeting"
+
+    def test_greeting_with_question(self):
+        assert classify_intent([_human("Hola, ¿cómo estás?")]) == "greeting"
+
+    def test_buenos_dias(self):
+        assert classify_intent([_human("Buenos días")]) == "greeting"
+
+    def test_greeting_prefix_but_long_narrative_is_not_a_greeting(self):
+        """A message that happens to start with a greeting word but then
+        carries substantive content past the greeting-length cutoff must
+        not be short-circuited as a simple greeting."""
+        text = (
+            "Hola, quería contarte que me gusta mucho resolver problemas "
+            "lógicos y programar desde que era niño, y quiero saber qué "
+            "carrera se ajusta mejor a ese perfil."
+        )
+        assert classify_intent([_human(text)]) != "greeting"
+
+
+class TestClassifyIntentChitchat:
+    def test_joke_request(self):
+        assert classify_intent([_human("Cuéntame un chiste")]) == "chitchat"
+
+    def test_laughing(self):
+        assert classify_intent([_human("jaja que bueno")]) == "chitchat"
+
+
+class TestClassifyIntentComplex:
+    """Rich RIASEC narrative must stay on the strong model regardless of
+    length — this is exactly the content the assessment subagent needs
+    careful reasoning to score."""
+
+    def test_long_narrative_is_complex(self):
+        text = "Resuelvo problemas lógicos mejor que la gente. Quiero ser científico de datos."
+        assert classify_intent([_human(text)]) == "complex"
+
+    def test_short_but_substantive_trait_statement_is_complex(self):
+        """8 words -- short enough to trip a naive length-only heuristic,
+        but 'trabajo como tutor' is exactly the personal-trait narrative
+        that must stay on the strong model."""
+        text = "Trabajo como tutor y me siento muy realizado."
+        assert classify_intent([_human(text)]) == "complex"
+
+    def test_career_plan_request_is_complex(self):
+        text = "Quiero ser Científico de la Computación, ¿cómo llego ahí?"
+        assert classify_intent([_human(text)]) == "complex"
+
+    def test_no_human_message_is_complex(self):
+        """No HumanMessage to classify (e.g. only a SystemMessage present)
+        -- default to the strong model rather than guessing."""
+        assert classify_intent([SystemMessage(content="system prompt")]) == "complex"
+
+    def test_empty_messages_is_complex(self):
+        assert classify_intent([]) == "complex"
+
+    def test_non_string_content_is_complex(self):
+        """Multimodal content blocks (list, not str) aren't parsed by this
+        heuristic -- default to the strong model rather than crash."""
+        message = HumanMessage(content=[{"type": "text", "text": "hola"}])
+        assert classify_intent([message]) == "complex"
+
+
+class TestClassifyIntentClarification:
+    def test_short_structured_query_is_clarification(self):
+        """Not a personal narrative -- just relays a code and asks for
+        matches. Short, mechanical, no reasoning needed."""
+        text = "Tengo IAS. ¿Qué carreras me convienen?"
+        assert classify_intent([_human(text)]) == "clarification"
+
+    def test_short_uncertain_opener_is_clarification(self):
+        text = "No sé qué quiero estudiar, ayúdame a descubrirlo."
+        assert classify_intent([_human(text)]) == "clarification"
+
+    def test_short_off_topic_question_is_clarification(self):
+        assert classify_intent([_human("¿Cómo invierto en la bolsa?")]) == "clarification"
+
+
+class TestClassifyIntentAssessmentAnswer:
+    """Requires a preceding AIMessage that looks like a scored question --
+    only present in real (interleaved) conversations, not the synthetic
+    eval dataset (see TestFastIntentCoverageOnEvalDataset below)."""
+
+    def test_short_reply_to_a_scored_question_is_assessment_answer(self):
+        messages = [
+            _human("Quiero explorar mi perfil vocacional."),
+            _ai("En una escala del 1 al 10, ¿qué tanto disfrutas resolver problemas lógicos?"),
+            _human("Un 8"),
+        ]
+        assert classify_intent(messages) == "assessment_answer"
+
+    def test_short_reply_without_a_preceding_question_is_clarification(self):
+        """Same short reply, but nothing before it looks like a scored
+        question -- falls back to the generic short-turn bucket."""
+        messages = [_ai("Hola, ¿en qué te puedo ayudar?"), _human("Un 8")]
+        assert classify_intent(messages) == "clarification"
+
+
+class TestFastIntentsConstant:
+    def test_all_four_documented_intents_are_present(self):
+        assert {"greeting", "chitchat", "assessment_answer", "clarification"} == FAST_INTENTS
+
+    def test_complex_is_not_a_fast_intent(self):
+        assert "complex" not in FAST_INTENTS
+
+
+class TestFastIntentCoverageOnEvalDataset:
+    """Sprint 8, task 8.4 DoD: '>=30% de turnos por Haiku en el dataset de
+    evals'.
+
+    Measured by replaying evals/dataset.jsonl's real user turns through
+    classify_intent, incrementally (each turn classified against only the
+    HumanMessages that would have already arrived by that point in a real
+    conversation) -- not the final full-history snapshot, which would let
+    a later turn's classification see turns that haven't "happened" yet.
+
+    The dataset's turns are all `role: "user"` (no interleaved scripted
+    assistant replies), so `assessment_answer` never fires here; coverage
+    on this dataset comes entirely from greeting/chitchat/clarification.
+    That's expected and consistent with the dataset's own purpose (RIASEC
+    extraction stress-testing, not routing-representative traffic) --
+    broadening evals/dataset.jsonl itself is Sprint 9 scope (task 9.B.1).
+    """
+
+    def test_fast_intent_coverage_meets_the_dod_threshold(self):
+        from evals.dataset import load_dataset
+
+        cases = load_dataset()
+
+        total_turns = 0
+        fast_turns = 0
+        for case in cases:
+            history: list[HumanMessage] = []
+            for turn in case.turns:
+                if turn.role != "user":
+                    continue
+                history.append(_human(turn.content))
+                total_turns += 1
+                if classify_intent(history) in FAST_INTENTS:
+                    fast_turns += 1
+
+        assert total_turns > 0, "eval dataset has no user turns to measure"
+        coverage = fast_turns / total_turns
+        assert coverage >= 0.30, (
+            f"fast-intent coverage on evals/dataset.jsonl is {coverage:.1%} "
+            f"({fast_turns}/{total_turns}), below the Sprint 8 DoD's 30% threshold"
+        )

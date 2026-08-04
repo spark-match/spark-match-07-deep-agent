@@ -1113,10 +1113,10 @@ class IntentRouterMiddleware(AgentMiddleware):
 Clasificar con heurísticas (longitud, presencia de tool_calls previas, keywords) **antes** de considerar un LLM clasificador: el POC v2 alcanzó 38% de cobertura Haiku sin coste adicional de clasificación.
 
 **DoD Sprint 8**
-- [ ] `web_search` no bloquea el event loop (test con `asyncio` concurrente).
-- [ ] Fallback a DDG **no** se dispara con 401 de Tavily.
-- [ ] `SkillsMiddleware` está en el stack (assert sobre `agent.nodes` o sobre el system prompt renderizado).
-- [ ] Router activo con métrica `intent_route` emitida; ≥30% de turnos por Haiku en el dataset de evals.
+- [x] `web_search` no bloquea el event loop (test con `asyncio` concurrente): `AsyncTavilyClient` + `asyncio.to_thread` para DDG (`tests/tools/web_search.py::TestWebSearchHandlerDoesNotBlockEventLoop`).
+- [x] Fallback a DDG **no** se dispara con 401 de Tavily: `InvalidAPIKeyError`/`MissingAPIKeyError` retornan error de inmediato; 429/timeout/red siguen cayendo a DDG (`tests/tools/web_search.py::TestWebSearchHandlerTypedTavilyErrors`).
+- [x] `SkillsMiddleware` está en el stack (assert sobre `agent.nodes` o sobre el system prompt renderizado): nodo presente y contenido real del skill confirmado en el system message (`tests/agent/factory.py::TestAgentGraphStructure::test_skills_middleware_is_wired_into_the_graph`, `TestSkillsAreLoadedIntoTheSystemPrompt`).
+- [x] Router activo con métrica `intent_route` emitida; ≥30% de turnos por Haiku en el dataset de evals: heurística en `src/agent/intent.py` (longitud + keywords narrativos + saludo/chitchat), `IntentRouterMiddleware` en `src/agent/router_middleware.py` loguea `intent_route intent=... model=...`. Cobertura real medida contra `evals/dataset.jsonl` (no un corpus sintético aparte): 31.6% (6/19 turnos) — `tests/agent/intent.py::TestFastIntentCoverageOnEvalDataset`. Enrutamiento real (no solo presencia de nodo, que no aplica a middleware `wrap_model_call`-only) probado en `tests/agent/factory.py::TestIntentRouterSelectsTheModelPerTurn`.
 - [ ] `.mcp.json` presente y documentado.
 - [ ] ≥20 carreras en `data/careers/`.
 
