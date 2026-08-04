@@ -38,6 +38,19 @@ dependencies = [
     "cachetools>=5.5",
     "boto3>=1.40",
     "slowapi>=0.1.9",
+    # MCP server SDK (Sprint 8, task 8.5) -- exposes the 4 project tools
+    # over the Model Context Protocol via MCPServer (mcp.server.mcpserver).
+    # Note: the roadmap names "langchain-mcp-adapters" for this task, but
+    # that package is a *client* (consumes external MCP servers into
+    # LangChain) -- it has no server-side API. "mcp" is the underlying
+    # protocol SDK that even langchain-mcp-adapters depends on for its own
+    # example servers; it's the correct (and minimal) dependency for the
+    # expose-only scope this task was narrowed to. >=2.0 because 2.0
+    # renamed the 1.x FastMCP class to MCPServer and moved its module
+    # (mcp.server.fastmcp -> mcp.server.mcpserver) -- confirmed by
+    # installing and introspecting the real package, not assumed from
+    # (outdated) docs.
+    "mcp>=2.0",
 ]
 
 [build-system]
