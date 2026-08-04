@@ -36,7 +36,8 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 | Runtime | LangGraph |
 | API | FastAPI + SSE (AG-UI protocol) |
 | Protocolo frontend | AG-UI (`ag-ui-langgraph`) |
-| Memoria / Perfilado | `langmem` (extracción de perfil desde conversación) |
+| Memoria / Perfilado | `langmem` (extracción de perfil desde conversación, activo desde Sprint 6) |
+| Persistencia | Checkpointer + Store de LangGraph (`memory`/`sqlite` sin AWS, `postgres` pendiente — Sprint 6) |
 | Web search | Tavily (primary) + DuckDuckGo (fallback) |
 | Package manager | `uv` |
 | Python | 3.14 |

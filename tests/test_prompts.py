@@ -22,13 +22,14 @@ class TestPromptLoader:
     def test_prompts_dir_exists(self):
         assert PROMPTS_DIR.exists()
 
-    def test_list_prompts_returns_four(self):
+    def test_list_prompts_returns_five(self):
         names = list_prompts()
         assert "coordinator" in names
         assert "assessment" in names
         assert "matching" in names
         assert "planning" in names
-        assert len(names) == 4
+        assert "user_memory_seed" in names  # Sprint 6, task 6.C
+        assert len(names) == 5
 
     def test_coordinator_loaded(self):
         body = load_prompt("coordinator")
