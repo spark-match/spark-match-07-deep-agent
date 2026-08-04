@@ -24,7 +24,7 @@ El plan de finalización vive en **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** 
 | Memoria por sesión y entre sesiones | **Cerrado (Sprint 6).** `checkpointer=`/`store=`/`backend=` cableados en `create_spark_agent()` y en el lifespan de `app.py`. `user_id` real desde el JWT desde Sprint 7 (antes placeholder fijo) — ver fila de Autenticación. |
 | Autenticación / autorización | **Cerrado (Sprint 7).** `POST /ag-ui` exige JWT válido (`src/auth/`); `thread_id` derivado + registro de propiedad (403 cruzado); `runtime.context.user_id/role/email` disponibles en todo middleware/tool vía `context_schema=AgentContext`. Endurecimiento (7.E) cerrado: CORS validator, cabeceras de seguridad, rate limiting (`slowapi`, 5 req/min por `user_id`) y budget diario por usuario en el store. Ver `docs/auth.md`. |
 | `langmem` | **Activo.** `src/memory/profile_manager.py` usa `create_memory_store_manager` + `ReflectionExecutor`; `src/agent/memory_middleware.py` hidrata/persiste el perfil. |
-| `skills/` | Nunca se carga (`skills=` no se pasa a `create_deep_agent`). |
+| `skills/` | **Activo (Sprint 8, tarea 8.3).** `skills=[SKILLS_ROOT]` pasado a `create_deep_agent()`; `SkillsMiddleware` lee `SKILL.md` vía un `FilesystemBackend` acotado a `skills/` (no la raíz del repo). `skills/vocational_advisor/SKILL.md` ya no es peso muerto. |
 | Guardrail de turnos | **Corregido (Sprint 5, B1).** `MaxTurnsMiddleware` usa `jump_to` (`@hook_config(can_jump_to=["end"])`), no `goto`. |
 | Modelo por defecto | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` — dentro del allowlist IAM de `spark-match-02-infrastructure`. |
 | Contenedor | No hay `Dockerfile` (solo un `.dockerignore` huérfano). |
@@ -448,7 +448,7 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 | **5** | Correcciones críticas (B1–B10) + deuda técnica | ✅ Cerrado 2026-08-04 | 6, 7 |
 | **6** | Memoria persistente: checkpointer + store + langmem | ✅ Cerrado 2026-08-04 | 7, 9 |
 | **7** | Auth JWT + roles + aislamiento por usuario | ✅ Cerrado 2026-08-04 | 10 |
-| **8** | Tools async, skills, MCP, intent router | Pendiente | 9 |
+| **8** | Tools async, skills, MCP, intent router | ✅ Cerrado 2026-08-04 | 9 |
 | **9** | Guardrails + evals ampliados | Pendiente | 11 |
 | **10** | Contenedor + CI/CD + infraestructura | Pendiente | 11 |
 | **11** | Deploy, observabilidad, cierre TFP | Pendiente | — |
@@ -474,6 +474,17 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 > complementario al cupo de `web_search` por turno de `src/budget.py`,
 > que sigue en proceso hasta la migración async de Sprint 8) — ver
 > `docs/auth.md`.
+>
+> **Sprint 8 cerrado.** `web_search` migrado a async (`AsyncTavilyClient` +
+> `asyncio.to_thread` para DDG, 8.1) con errores tipados (401 no cae a DDG,
+> 8.2); `SkillsMiddleware` activado sobre un `FilesystemBackend` acotado a
+> `skills/` (nunca la raíz del repo, 8.3); `IntentRouterMiddleware` enruta
+> Haiku/Sonnet con heurística pura, 31.6% de cobertura medida contra
+> `evals/dataset.jsonl` (8.4); servidor MCP en `src/mcp/` exponiendo las 4
+> tools (solo exposición, `mcp` — no `langchain-mcp-adapters`, que es
+> cliente — ver `docs/mcp.md`, 8.5); `max_tokens` configurable en ambos
+> modelos (8.6); catálogo de carreras 10 → 20 (8.7). 7 PRs individuales
+> (#36–#42), cada uno con su propio ciclo `branch → dev`.
 
 `IMPROVEMENTS.md` documenta los Sprints 1–4, ya cerrados. Es histórico: **no lo uses como backlog**.
 
