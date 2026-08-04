@@ -511,19 +511,23 @@ Lección aprendida en `spark-match-02-infrastructure` (PR #65): se dismissaron 3
 
 ## 13. Deuda de gobernanza conocida (pendiente de arreglar)
 
-Estado verificado al 2026-08-04. Estos ítems se cierran en el Sprint 10 (§10.C del roadmap):
+Estado verificado al 2026-08-04. G4, G6 y G8 siguen abiertos y se cierran en el
+Sprint 10 (§10.C del roadmap); requieren CI real / pipelines que aún no existen
+(ver `../spark-match-01-devops/AGENTS.md` §7.2 sobre las recetas Python borradas
+el 2026-08-02). El resto se resolvió sin depender de CI:
 
 | # | Problema | Detalle |
 |---|---|---|
 | G1 | ~~`CODEOWNERS` usa catch-all `*`~~ | **Resuelto.** `main` migró a paths explícitos el 2026-07-26 (`1b08968` + `6bc0c10`); `dev` recuperó esa versión en el PR que introdujo este archivo. |
-| G2 | **`pull_request_template.md` contradice `CODEOWNERS`** | El template dice que solo `@spark-match/product-owners` puede aprobar y que `ai-devs` no puede. `CODEOWNERS` y el ruleset del org (`reviewerTeam: ai-devs`) dicen lo contrario. **El template está mal.** |
-| G3 | **`CODEOWNERS` referencia paths inexistentes** | `/decisions/`, `/onboarding/`, `/postmortems/`, `/CONTRIBUTING.md`, `/LICENSE` no existen en el repo. O se crean o se quitan del fichero. |
+| G2 | ~~`pull_request_template.md` contradice `CODEOWNERS`~~ | **Resuelto.** El template decía que solo `@spark-match/product-owners` puede aprobar y que `ai-devs` no puede; se corrigió para reflejar el ruleset real (`reviewerTeam: ai-devs`, `product-owners` co-owner solo en paths de gobernanza). |
+| G3 | ~~`CODEOWNERS` referencia paths inexistentes~~ | **Resuelto.** `/decisions/`, `/onboarding/`, `/postmortems/`, `/CONTRIBUTING.md`, `/LICENSE` no existen en el repo; se quitaron las entradas fantasma en vez de crear directorios vacíos. Si se crean en el futuro, añadir su entrada en el mismo PR. |
 | G4 | **`statusChecks: []`** | La entrada de este repo en `governance/repository-governance.json` no exige ningún check. Poblarla tras crear los pipelines (R1–R3 del roadmap). |
-| G5 | **Sin `.commitlintrc.json`** | No hay enforcer de Conventional Commits ni local ni en CI. |
-| G6 | **Sin release-please** | `pyproject.toml` dice `0.1.0`, `CHANGELOG.md` declara `0.3.0` released (bug B10). |
-| G7 | **Sin `dependabot.yml`** | Ni `uv`/`pip`, ni `github-actions`, ni `docker`. |
-| G8 | **Sin proyecto SonarCloud** | Verificado: la búsqueda de proyectos `spark-match` no devuelve este repo. |
-| G9 | **`main` y `dev` divergieron en contenido** | Ver §13.1. Es la deuda más urgente: bloquea cualquier sync limpio. |
+| G5 | ~~Sin `.commitlintrc.json`~~ | **Resuelto.** Config añadida con el type-enum y scope-enum de §4 de este documento. El enforcer en CI (`reusable-commitlint`) llega con el Sprint 10. |
+| G6 | **Sin release-please** | `pyproject.toml` dice `0.3.0` (ya corregido, bug B10 del Sprint 5), `CHANGELOG.md` declara `0.3.0` released. Configurar `release-please` es cosmético sin el CI que lo dispare; se hace junto al Sprint 10. |
+| G7 | ~~Sin `dependabot.yml`~~ | **Resuelto.** Ecosistemas `uv` y `github-actions` añadidos. El ecosistema `docker` se añade en el Sprint 10 cuando exista un `Dockerfile` real. |
+| G8 | **Sin proyecto SonarCloud** | Verificado de nuevo el 2026-08-04: la búsqueda de proyectos `spark-match` sigue sin devolver este repo. SonarCloud auto-provisiona el proyecto en el primer análisis real vía CI, o requiere alta manual en la UI; ninguna de las dos vías es posible sin el pipeline del Sprint 10. |
+| G9 | ~~`main` y `dev` divergieron en contenido~~ | **Resuelto** el 2026-08-04 (ver §13.1 histórico, PR #24). |
+| G10 | **`main`/`dev` sin ancestría git real** | Descubierto el 2026-08-04 al intentar sincronizar el cierre del Sprint 5 (PR #29). Ver §13.2. |
 
 Al añadir un path nuevo de primer nivel, **agrega su entrada en `CODEOWNERS` en el mismo PR**.
 
@@ -557,6 +561,50 @@ En Python un módulo y un paquete con el mismo nombre no pueden coexistir sin am
 **Consecuencia operativa**: el primer sync `dev` → `main` posterior a esta nota borrará esos 8 ficheros. Es el comportamiento deseado. Antes de lanzarlo hay que confirmar que ningún commit exclusivo de `main` se pierda: revisar `git log origin/dev..origin/main` y portar a `dev` lo que sea legítimo.
 
 **Lección**: esta divergencia es exactamente lo que previene §3. Ningún commit entra a `main` si no pasó antes por `dev`.
+
+### 13.2 `main`/`dev` sin ancestría git real (detectado 2026-08-04, resuelto el mismo día)
+
+Al intentar el sync `dev` → `main` de cierre del Sprint 5 (PR #29), el PR quedó
+`CONFLICTING` con `add/add` en casi todos los archivos tocados desde el
+Sprint 4, pese a que `git diff --stat origin/main origin/dev` mostraba un
+diff limpio y puramente aditivo.
+
+**Causa raíz**: todo el historial de syncs de este repo (incluida la
+reconciliación de §13.1 vía PR #24) usó squash o `commit-tree` con un solo
+padre — ninguno de los dos crea ancestría git real. Git solo encontraba
+como ancestro común un commit anterior al refactor del Sprint 4, así que
+cualquier archivo creado después de ese punto (prácticamente todo el
+proyecto) aparecía como "añadido de forma independiente en ambos lados" en
+el merge de 3 vías, sin importar que el contenido fuera idéntico.
+
+**Fix aplicado**: se construyó un commit de merge real (2 padres: el tip
+anterior de `main` + el tip de `dev`) con `git commit-tree`, y se hizo push
+directo a `main` bajo la "dual-disable dance" documentada en
+`spark-match-01-devops/CONTRIBUTING.md` (flip temporal de
+`bypass_mode` del ruleset a `always` + `enforce_admins` a `false`, ventana
+de ~5 segundos, ambos restaurados de inmediato). Ver el comentario de
+cierre del PR #29 y el mensaje del commit `82bf13b` para el detalle
+completo.
+
+**Verificación post-fix**:
+
+```powershell
+git diff --stat origin/main origin/dev        # vacío
+git merge-base origin/main origin/dev          # == tip de origin/dev
+git show -s --format="parents=%P" origin/main  # 2 padres reales
+```
+
+Los 3 checks confirmaron ancestría real establecida por primera vez entre
+`main` y `dev`. Mientras se mantenga la regla de nunca commitear directo a
+`main` (§3), los futuros syncs `dev` → `main` —incluso vía squash normal—
+deberían computar un merge-base reciente y relevante en vez de saltar al
+ancestro antiguo previo al Sprint 4.
+
+**Lección**: un sync recurrente basado en squash o `commit-tree` de un solo
+padre nunca establece ancestría real; solo iguala contenido. Si el repo
+necesita reconciliaciones repetidas, la ancestría de 2 padres (como en este
+fix) es la única solución durable, aunque requiera un bypass documentado
+una única vez.
 
 ---
 

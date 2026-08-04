@@ -44,9 +44,11 @@
 
 ## Aprobaciones requeridas
 
-Este PR requiere **1 aprobación** de un miembro del team `@spark-match/product-owners`.
-Como el autor no puede aprobar su propio PR, se necesita un revisor distinto que sea
-miembro de `product-owners`.
+Este PR requiere **1 aprobación** de un miembro del team `@spark-match/ai-devs`
+(CODE OWNER del repo, ver `.github/CODEOWNERS` y el ruleset
+`spark-match-default-branch-protection`). Como el autor no puede aprobar su
+propio PR, se necesita un revisor distinto que sea miembro de `ai-devs`.
 
-Los miembros de `ai-devs` y `devops` pueden comentar y hacer code review, pero **no pueden
-hacer click en Approve** (solo `product-owners` es CODE OWNER).
+Si el PR toca un path de gobernanza (`README.md`, `AGENTS.md`,
+`ROADMAP-2026-08.md`), `@spark-match/product-owners` es co-owner de esos
+archivos específicos y su aprobación también satisface el requisito.
