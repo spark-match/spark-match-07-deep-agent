@@ -23,6 +23,7 @@ from src.agent.memory_middleware import (
     ProfilePersistMiddleware,
 )
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
+from src.agent.pii import PIIRedactionMiddleware
 from src.agent.router_middleware import IntentRouterMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
@@ -165,6 +166,17 @@ def create_spark_agent(
       (that combination doesn't exist — ``jump_to`` isn't supported by
       ``wrap_model_call``, only by ``before_model``/``after_model``).
 
+    PII redaction (Sprint 9, task 9.A.2):
+    - ``PIIRedactionMiddleware`` strips email/phone/DNI occurrences from
+      the ``manage_memory`` tool's ``content`` argument before a
+      preference is actually written to the store.
+    - Separately, ``ProfilePersistMiddleware`` (Sprint 6) now redacts the
+      same categories from every message before submitting the
+      conversation to the background ``StudentProfile`` extractor — see
+      ``src/agent/pii.py`` for both integration points and the explicit
+      non-goal note (``/memories/AGENTS.md`` writes via deepagents' own
+      filesystem tools are not covered).
+
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
     - Que carreras me convienen -> matching subagent
@@ -223,6 +235,7 @@ def create_spark_agent(
         middleware.append(ProfileHydrationMiddleware())
     middleware.append(MaxTurnsMiddleware())
     middleware.append(AssessmentOnceMiddleware())
+    middleware.append(PIIRedactionMiddleware())
     middleware.append(
         IntentRouterMiddleware(fast_model=fast_model_resolved, strong_model=strong_model)
     )
