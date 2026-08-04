@@ -25,6 +25,7 @@ end-to-end 403 would require deliberately bypassing derivation.
 
 from __future__ import annotations
 
+import itertools
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -93,7 +94,11 @@ def client(monkeypatch):
 
     def _fake_create_spark_agent(**kwargs):
         kwargs.pop("model", None)
-        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hola!")]))
+        # itertools.cycle (not a single-item iter) so tests that invoke
+        # /ag-ui more than once against the same app instance — e.g.
+        # TestRateLimit, which needs several requests to trip the limiter
+        # — don't exhaust the fake model's queued responses.
+        fake = ToolCallingFakeChatModel(messages=itertools.cycle([AIMessage(content="hola!")]))
         return real_create_spark_agent(model=fake, **kwargs)
 
     def _fake_build_reflection_executor(store):
@@ -133,6 +138,50 @@ class TestHealthIsPublic:
     def test_health_does_not_require_auth(self, client):
         response = client.get("/health")
         assert response.status_code == 200
+
+
+class TestSecurityHeaders:
+    """Sprint 7, task 7.E.2 — every response carries the fixed header set."""
+
+    def test_security_headers_present_on_public_route(self, client):
+        response = client.get("/health")
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["x-frame-options"] == "DENY"
+        assert response.headers["referrer-policy"] == "no-referrer"
+
+    def test_security_headers_present_on_401_response(self, client):
+        response = client.post("/ag-ui", json=_ag_ui_body())
+        assert response.status_code == 401
+        assert response.headers["x-content-type-options"] == "nosniff"
+
+
+class TestRateLimit:
+    """Sprint 7, task 7.E.3 — per-user_id burst limiter on POST /ag-ui."""
+
+    def test_exceeding_the_per_minute_limit_returns_429(self, client, monkeypatch):
+        monkeypatch.setenv("SPARK_RATE_LIMIT_PER_MINUTE", "2")
+        get_settings.cache_clear()
+        token = _make_token(user_id="rate-limit-user")
+
+        for _ in range(2):
+            response = client.post(
+                "/ag-ui",
+                json=_ag_ui_body(),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert response.status_code == 200
+
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 429
+
+        from src.api.rate_limit import limiter
+
+        limiter.reset()
+        get_settings.cache_clear()
 
 
 class TestAgUiRequiresAuth:

@@ -22,7 +22,7 @@ El plan de finalización vive en **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** 
 | Capacidad | Estado |
 |---|---|
 | Memoria por sesión y entre sesiones | **Cerrado (Sprint 6).** `checkpointer=`/`store=`/`backend=` cableados en `create_spark_agent()` y en el lifespan de `app.py`. `user_id` real desde el JWT desde Sprint 7 (antes placeholder fijo) — ver fila de Autenticación. |
-| Autenticación / autorización | **Núcleo cerrado (Sprint 7, PRs #A.7).** `POST /ag-ui` exige JWT válido (`src/auth/`); `thread_id` derivado + registro de propiedad (403 cruzado); `runtime.context.user_id/role/email` disponibles en todo middleware/tool vía `context_schema=AgentContext`. Pendiente: CORS validator, cabeceras de seguridad, rate limiting y budget-por-usuario en el store (tareas 7.E.1–7.E.4, PR de endurecimiento aparte). Ver `docs/auth.md`. |
+| Autenticación / autorización | **Cerrado (Sprint 7).** `POST /ag-ui` exige JWT válido (`src/auth/`); `thread_id` derivado + registro de propiedad (403 cruzado); `runtime.context.user_id/role/email` disponibles en todo middleware/tool vía `context_schema=AgentContext`. Endurecimiento (7.E) cerrado: CORS validator, cabeceras de seguridad, rate limiting (`slowapi`, 5 req/min por `user_id`) y budget diario por usuario en el store. Ver `docs/auth.md`. |
 | `langmem` | **Activo.** `src/memory/profile_manager.py` usa `create_memory_store_manager` + `ReflectionExecutor`; `src/agent/memory_middleware.py` hidrata/persiste el perfil. |
 | `skills/` | Nunca se carga (`skills=` no se pasa a `create_deep_agent`). |
 | Guardrail de turnos | **Corregido (Sprint 5, B1).** `MaxTurnsMiddleware` usa `jump_to` (`@hook_config(can_jump_to=["end"])`), no `goto`. |
@@ -447,7 +447,7 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 |---|---|---|---|
 | **5** | Correcciones críticas (B1–B10) + deuda técnica | ✅ Cerrado 2026-08-04 | 6, 7 |
 | **6** | Memoria persistente: checkpointer + store + langmem | ✅ Cerrado 2026-08-04 | 7, 9 |
-| **7** | Auth JWT + roles + aislamiento por usuario | 🟡 Núcleo cerrado 2026-08-04 (7.E pendiente) | 10 |
+| **7** | Auth JWT + roles + aislamiento por usuario | ✅ Cerrado 2026-08-04 | 10 |
 | **8** | Tools async, skills, MCP, intent router | Pendiente | 9 |
 | **9** | Guardrails + evals ampliados | Pendiente | 11 |
 | **10** | Contenedor + CI/CD + infraestructura | Pendiente | 11 |
@@ -463,13 +463,17 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 > el Sprint 7 (auth JWT), que además reemplaza ese placeholder por el
 > `user_id` real.
 >
-> **Sprint 7 — núcleo cerrado (7.A–7.D).** JWT validado (`src/auth/`),
-> `thread_id` derivado + registro de propiedad (7.B), `context_schema=AgentContext`
-> cablea `runtime.context.user_id/role/email` en todo el grafo (7.C), modelo
-> de roles/capacidades (7.D). El `user_id` placeholder del Sprint 6 queda
-> reemplazado por el real en toda request autenticada. Pendiente: 7.E
-> (CORS validator, cabeceras de seguridad, rate limiting, budget por
-> usuario en el store) en un PR de endurecimiento aparte — ver `docs/auth.md`.
+> **Sprint 7 cerrado.** JWT validado (`src/auth/`), `thread_id` derivado +
+> registro de propiedad (7.B), `context_schema=AgentContext` cablea
+> `runtime.context.user_id/role/email` en todo el grafo (7.C), modelo de
+> roles/capacidades (7.D). El `user_id` placeholder del Sprint 6 queda
+> reemplazado por el real en toda request autenticada. Endurecimiento
+> (7.E) cerrado en un PR aparte: CORS validator (7.E.1), cabeceras de
+> seguridad (7.E.2), rate limiting por `user_id` vía `slowapi` (7.E.3), y
+> presupuesto diario por usuario en el store (7.E.4, distinto y
+> complementario al cupo de `web_search` por turno de `src/budget.py`,
+> que sigue en proceso hasta la migración async de Sprint 8) — ver
+> `docs/auth.md`.
 
 `IMPROVEMENTS.md` documenta los Sprints 1–4, ya cerrados. Es histórico: **no lo uses como backlog**.
 

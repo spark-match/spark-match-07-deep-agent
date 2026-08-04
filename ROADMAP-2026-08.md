@@ -1062,15 +1062,18 @@ Aplicarlo con un `wrap_tool_call` que rechace tools fuera de capability, y con `
 | 7.E.4 | Budget por usuario, no por proceso | `src/budget.py` usa `dict` + `ContextVar` en memoria → se rompe con `--workers > 1`. Mover el contador al `store`, ns `("spark-match", uid, "budget")`. |
 | 7.E.5 | Tests del API | `TestClient`: 401 sin token, 401 token expirado, 401 firma mala, 403 thread ajeno, 200 feliz, y que `/health` siga público. |
 
-**DoD Sprint 7** — núcleo (7.A–7.D) cerrado 2026-08-04; 7.E.1–7.E.4 diferidos a un PR de endurecimiento aparte
+**DoD Sprint 7** — núcleo (7.A–7.D) cerrado 2026-08-04; 7.E cerrado 2026-08-04
 - [x] `POST /ag-ui` devuelve 401 sin `Authorization` (`tests/api/app.py::TestAgUiRequiresAuth`).
 - [x] Un JWT firmado con `iss/aud` correctos y la clave del backend valida OK (test con clave sintética, `tests/auth/jwt_validator.py` + `tests/api/app.py::TestAgUiHappyPath`).
 - [x] `user_a` no puede leer el `thread_id` de `user_b` (403) — probado a nivel unitario en `tests/auth/thread_guard.py::test_different_owner_is_rejected`. No se reproduce en el stack HTTP completo porque `derive_thread_id` (7.B) ya evita la colisión por construcción: dos usuarios nunca aterrizan en el mismo `thread_id` derivado, así que un 403 real requeriría forzar deliberadamente esa colisión.
 - [x] `runtime.context.user_id` está disponible dentro de una tool (test) — `tests/agent/memory_middleware.py` (Sprint 6) ya prueba que los middlewares leen `runtime.context.user_id`; `tests/api/app.py::test_thread_owner_is_registered_under_the_real_user_id` prueba que ese valor es el `user_id` real del JWT end-to-end, no el placeholder `DEFAULT_USER_ID`.
 - [x] Namespaces del store contienen `user_id` real, verificado inspeccionando el store (`tests/api/app.py`).
-- [x] `src/api/app.py` pasa de 0% a ≥80% de cobertura (98% con `tests/api/app.py`).
+- [x] `src/api/app.py` pasa de 0% a ≥80% de cobertura (99% con `tests/api/app.py`).
 - [x] Documentado en `docs/auth.md` el contrato exacto y la limitación de roles.
-- [ ] 7.E.1 CORS validator, 7.E.2 cabeceras de seguridad, 7.E.3 rate limiting, 7.E.4 budget por usuario en el store — diferidos explícitamente a un PR de endurecimiento aparte (no bloquean el núcleo de auth).
+- [x] 7.E.1 CORS validator: `Settings._validate_cors_origins` rechaza `"*"` y orígenes sin esquema al arrancar (`tests/config/settings.py::TestCorsOriginsValidation`).
+- [x] 7.E.2 Cabeceras de seguridad: `SecurityHeadersMiddleware` añade `X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy` a toda respuesta, incluidos errores (`tests/api/app.py::TestSecurityHeaders`).
+- [x] 7.E.3 Rate limiting: `slowapi`, 5 req/min por `user_id` (fallback IP) en `/ag-ui`, configurable vía `SPARK_RATE_LIMIT_PER_MINUTE` (`tests/api/app.py::TestRateLimit`).
+- [x] 7.E.4 Budget por usuario en el store: `src/auth/budget.py::check_and_increment_daily_budget`, namespace `("spark-match", user_id, "budget")`, `SPARK_BUDGET_MAX_REQUESTS_PER_USER_PER_DAY` (`tests/auth/budget.py`). Distinto y complementario al cupo de `web_search` por turno (`src/budget.py`), que sigue en proceso hasta la migración async de Sprint 8 (tarea 8.1) — documentado explícitamente en `docs/auth.md` §7/§8.4.
 
 ---
 
