@@ -23,11 +23,12 @@ permissions:
   id-token: write
 
 jobs:
+  # Nota: un job que llama un reusable solo admite name/uses/with/secrets/
+  # needs/if/permissions. El gate de GH Environment lo enlaza el propio
+  # reusable via inputs.environment-name.
   deploy-dev:
     name: deploy (dev)
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
-    environment: dev
     uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
     with:
       environment-name: dev
@@ -43,8 +44,6 @@ jobs:
   deploy-production:
     name: deploy (production)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
     uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
     with:
       environment-name: production
@@ -60,8 +59,6 @@ jobs:
   deploy-manual:
     name: deploy (manual - ${{ github.event.inputs.environment }})
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
     uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
     with:
       environment-name: ${{ github.event.inputs.environment }}
