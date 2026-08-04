@@ -17,6 +17,7 @@ from src.config import get_settings
 from src.models.profile import StudentProfile
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
     from langgraph.store.base import BaseStore
 
 # Namespace template: langmem substitutes ``{user_id}`` from
@@ -61,7 +62,7 @@ You are analyzing a vocational guidance conversation to extract a student's prof
 """
 
 
-def build_profile_manager(store: BaseStore) -> object:
+def build_profile_manager(store: BaseStore, model: str | BaseChatModel | None = None) -> object:
     """Create a langmem store manager configured for StudentProfile extraction.
 
     Unlike ``create_memory_manager`` (the previous, unused implementation),
@@ -74,14 +75,20 @@ def build_profile_manager(store: BaseStore) -> object:
             Comes from :func:`src.persistence.build_persistence` in
             production; any ``BaseStore`` (e.g. ``InMemoryStore``) works in
             tests.
-
-    Uses ``settings.fast_model_string`` (Haiku): structured extraction is a
-    cheap, low-stakes task compared to the main conversation model.
+        model: Chat model to use for extraction. Defaults to
+            ``settings.fast_model_string`` (Haiku) when omitted. Accepting an
+            already-constructed ``BaseChatModel`` lets tests inject a fake
+            (e.g. ``GenericFakeChatModel``) instead of resolving a real
+            ``ChatBedrock`` through ``init_chat_model`` — that resolution
+            happens eagerly inside ``create_memory_store_manager.__init__``
+            and requires an AWS region/credentials even if the model is
+            never actually invoked, which would otherwise break the
+            no-AWS-required guarantee (hard rule #7) in CI.
     """
     settings = get_settings()
 
     return create_memory_store_manager(
-        settings.fast_model_string,
+        model if model is not None else settings.fast_model_string,
         schemas=[StudentProfile],
         instructions=EXTRACTION_INSTRUCTIONS,
         namespace=PROFILE_NAMESPACE,
@@ -90,7 +97,9 @@ def build_profile_manager(store: BaseStore) -> object:
     )
 
 
-def build_reflection_executor(store: BaseStore) -> ReflectionExecutor:
+def build_reflection_executor(
+    store: BaseStore, model: str | BaseChatModel | None = None
+) -> ReflectionExecutor:
     """Wrap :func:`build_profile_manager` in a background reflection executor.
 
     ``ProfilePersistMiddleware.after_agent`` calls ``.submit(...)`` on the
@@ -98,7 +107,7 @@ def build_reflection_executor(store: BaseStore) -> ReflectionExecutor:
     ``settings.reflection_delay_seconds``, so extraction never blocks the
     user-facing turn.
     """
-    return ReflectionExecutor(build_profile_manager(store), store=store)
+    return ReflectionExecutor(build_profile_manager(store, model=model), store=store)
 
 
 __all__ = [
