@@ -135,12 +135,77 @@ realmente emita roles distintos de `admin`/nada.
   diseñado contra el conjunto de roles *planeado*, no el actual. Nada se
   rompe cuando el backend empiece a emitir `docente`/`graduado`; sí hay que
   añadir el `wrap_tool_call` que efectivamente los haga cumplir.
-- **CORS / cabeceras de seguridad / rate limiting / budget por usuario en
-  el store** (tareas 7.E.1–7.E.4 del roadmap) — **fuera de alcance de este
-  PR**, se abordan en un PR de endurecimiento (`7.E`) separado. `src/budget.py`
-  sigue siendo un `dict` de proceso (no compartido entre workers) hasta
-  entonces.
 - **`docente`/`graduado` sin capacidades diferenciadas reales**: hoy
   `CAPABILITIES` ya las distingue de `student`, pero como el backend no las
   emite, esto no se ha probado contra un JWT real con esos roles — solo
   contra claims sintéticos en tests.
+- **El presupuesto de `web_search` por turno sigue en proceso**
+  (`src/budget.py`, sección 8 abajo): el handler de la tool es síncrono por
+  diseño; moverlo a store-backed es alcance de Sprint 8 (tarea 8.1, tools
+  async), no de este PR.
+
+## 8. Endurecimiento del API (Sprint 7, tarea 7.E)
+
+Cuatro medidas adicionales, todas activas en `create_app()`:
+
+### 8.1 CORS validator (7.E.1)
+
+`Settings._validate_cors_origins` (`src/config/settings.py`, `model_validator
+mode="after"`) falla al arrancar si `SPARK_CORS_ORIGINS` contiene `"*"` o
+cualquier origen sin esquema `http(s)://`. `CORSMiddleware` siempre se
+registra con `allow_credentials=True`, así que un wildcard sería
+exactamente el caso que el propio navegador rechaza (credenciales +
+wildcard) — mejor un fallo de arranque explícito que un CORS silenciosamente
+roto en el navegador del usuario final.
+
+### 8.2 Cabeceras de seguridad (7.E.2)
+
+`SecurityHeadersMiddleware` (`src/api/security_headers.py`) añade a **toda**
+respuesta (incluidas las de error, p. ej. un 401):
+
+```
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+```
+
+Fijas, no configurables — no hay ningún caso de uso legítimo para
+desactivarlas en este API.
+
+### 8.3 Rate limiting (7.E.3)
+
+`src/api/rate_limit.py` usa `slowapi`, con `key_func` que decodifica el JWT
+del header `Authorization` (best-effort, sin lanzar en caso de fallo) para
+limitar por `user_id`; si no hay token válido, cae a la IP del cliente —
+así que incluso los intentos de adivinar credenciales desde el mismo origen
+quedan limitados. El límite (`SPARK_RATE_LIMIT_PER_MINUTE`, default `5`) se
+evalúa dinámicamente en cada request vía un `limit_value` callable, no un
+string fijo al decorar.
+
+**Detalle de implementación no obvio**: el endpoint `/ag-ui` está definido a
+**nivel de módulo** en `src/api/app.py` (no como closure dentro de
+`create_app()`) y decorado con `@limiter.limit(...)` exactamente una vez al
+importar el módulo. `slowapi` registra el límite de una ruta bajo una clave
+derivada del **nombre cualificado de la función**
+(`f"{func.__module__}.{func.__name__}"`) en el estado interno del `Limiter`
+singleton — si el endpoint se redefiniera como closure dentro de
+`create_app()` (que se invoca una vez por test en la suite), cada llamada
+re-registraría un límite duplicado bajo el mismo nombre, acumulando
+entradas y sobre-contando cada hit en requests posteriores. Se descubrió
+exactamente así: la suite completa empezó a devolver `429` de forma
+espontánea al combinar `tests/api/app.py` con otros archivos de test. Ver
+el commit que introduce este archivo para el detalle del diagnóstico.
+
+### 8.4 Presupuesto diario por usuario en el store (7.E.4)
+
+`src/auth/budget.py::check_and_increment_daily_budget` es un **presupuesto
+nuevo y distinto** al de `src/budget.py` (que sigue cubriendo el cupo de
+`web_search` *dentro de un mismo turno*, en proceso). Este otro cubre
+"cuántas veces puede invocar `/ag-ui` un `user_id` por día calendario UTC",
+partición por `user_id` (hard rule #4) en el mismo `BaseStore` que
+`thread_guard.py`: `namespace=("spark-match", user_id, "budget")`,
+`key=<fecha ISO>`. Sobrevive a reinicios y es consistente entre
+`--workers > 1`, a diferencia del contador de `web_search`. Se comprueba
+justo después de resolver `AuthContext`, antes de derivar el `thread_id`.
+`SPARK_BUDGET_MAX_REQUESTS_PER_USER_PER_DAY` (default `200`); `0` lo
+desactiva.

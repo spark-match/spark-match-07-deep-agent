@@ -5,10 +5,12 @@ Reads configuration from environment variables (prefixed with ``SPARK_``) and th
 across the application lifecycle without re-parsing.
 """
 
+from __future__ import annotations
+
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -123,6 +125,45 @@ class Settings(BaseSettings):
     jwt_secret_ssm_param: str = "/spark-match/secret/jwt-arn"
     # How long the resolved secret is cached in-process before re-fetching.
     jwt_secret_cache_seconds: int = 300
+
+    # --- API hardening (Sprint 7, task 7.E) ---
+    # Requests per user per minute allowed on POST /ag-ui. The backend
+    # (spark-match-03-backend) uses 5 requests / 10 seconds on its login
+    # endpoint; this is a coarser per-minute cap on the (costlier) agent
+    # invocation endpoint.
+    rate_limit_per_minute: int = 5
+    # Daily invocation cap per authenticated user_id, enforced against the
+    # store (hard rule #4: partitioned by user_id, not the in-process
+    # dict/ContextVar counters in src/budget.py, which reset on restart and
+    # aren't shared across --workers > 1). Distinct from
+    # max_web_searches_per_session, which caps tool calls within a single
+    # agent turn rather than requests across a day.
+    budget_max_requests_per_user_per_day: int = 200
+
+    @model_validator(mode="after")
+    def _validate_cors_origins(self) -> Settings:
+        """Fail fast at startup on an insecure CORS configuration.
+
+        ``CORSMiddleware`` is always registered with ``allow_credentials=True``
+        (src/api/app.py), so a wildcard origin would let any website read
+        authenticated responses via the browser — the exact case the CORS
+        spec forbids and browsers themselves reject. Catching it here turns
+        a silent, browser-side no-op into a loud startup failure instead of
+        a runtime mystery (task 7.E.1).
+        """
+        if "*" in self.cors_origins:
+            raise ValueError(
+                "SPARK_CORS_ORIGINS must not contain '*': CORSMiddleware is "
+                "always configured with allow_credentials=True, and browsers "
+                "reject wildcard origins combined with credentials. List the "
+                "exact origins allowed to call this API instead."
+            )
+        for origin in self.cors_origins:
+            if not (origin.startswith("http://") or origin.startswith("https://")):
+                raise ValueError(
+                    f"SPARK_CORS_ORIGINS entry {origin!r} must start with 'http://' or 'https://'."
+                )
+        return self
 
     @property
     def is_local(self) -> bool:
