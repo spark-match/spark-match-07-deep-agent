@@ -52,13 +52,15 @@ class TestMaxTurnsMiddleware:
         }
         result = mw.after_model(state, _fake_runtime())
         assert result is not None
-        # Should append a final AIMessage and route to END
+        # Should append a final AIMessage and route to "end" via jump_to —
+        # the real LangChain 1.x contract. A "goto" key here would be
+        # silently dropped by LangGraph and the graph would keep running.
         assert "messages" in result
         new_msg = result["messages"][0]
         assert isinstance(new_msg, AIMessage)
         assert "límite" in new_msg.content or "limite" in new_msg.content.lower()
         assert "2" in new_msg.content  # cap value echoed
-        assert result.get("goto") == "__end__"  # END constant
+        assert result.get("jump_to") == "end"
 
     def test_counts_only_ai_messages(self, monkeypatch):
         """Human and tool messages should not count toward the cap."""
@@ -174,6 +176,59 @@ class TestAssessmentOnceMiddleware:
         result = mw.wrap_tool_call(FakeRequest(), fake_handler)
         assert called[0] is True
         assert result == "ok"
+
+
+class TestAssessmentOnceMiddlewareAsync:
+    """Regression tests for the async tool-call path.
+
+    LangChain's middleware framework raises ``NotImplementedError`` for a
+    tool call if only the sync (``wrap_tool_call``) or only the async
+    (``awrap_tool_call``) hook is defined and the graph is invoked in the
+    other mode. The production API (``ag-ui-langgraph``) drives the graph
+    exclusively via ``astream_events``, so a missing ``awrap_tool_call``
+    would break every tool call in production, not just the assessment
+    tool. These tests exercise ``awrap_tool_call`` directly to make sure
+    it exists and behaves identically to the sync version.
+    """
+
+    async def test_allows_first_call_async(self):
+        mw = AssessmentOnceMiddleware()
+
+        class FakeRequest:
+            tool_call = {"name": "search_careers", "id": "c1"}
+            state = {"messages": []}
+
+        called = [False]
+
+        async def fake_handler(req):
+            called[0] = True
+            return "ok"
+
+        result = await mw.awrap_tool_call(FakeRequest(), fake_handler)
+        assert called[0] is True
+        assert result == "ok"
+
+    async def test_rejects_second_assessment_call_async(self):
+        mw = AssessmentOnceMiddleware()
+
+        prior_call = ToolCall(name=ASSESSMENT_TOOL_NAME, args={}, id="c1")
+        prior_ai = AIMessage(content="calling assessment", tool_calls=[prior_call])
+
+        class FakeRequest:
+            tool_call = {"name": ASSESSMENT_TOOL_NAME, "id": "c2"}
+            state = {"messages": [prior_ai]}
+
+        called = [False]
+
+        async def fake_handler(req):
+            called[0] = True
+            return "should not happen"
+
+        result = await mw.awrap_tool_call(FakeRequest(), fake_handler)
+        assert called[0] is False
+        assert isinstance(result, ToolMessage)
+        assert "already called" in result.content.lower()
+        assert result.tool_call_id == "c2"
 
 
 class TestMiddlewareIntegration:
