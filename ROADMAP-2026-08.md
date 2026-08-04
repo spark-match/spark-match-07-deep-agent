@@ -54,7 +54,7 @@ Replicar **en código portable** las bondades que AWS Bedrock AgentCore Harness 
 | 6 | **Memoria** (checkpointer + store + langmem) | 28 h | 7, 9 |
 | 7 | **Auth JWT + roles + aislamiento multi-usuario** | 24 h | 10 |
 | 8 | Tools, web_search, MCP, intent router | 24 h | 9 |
-| 9 | Guardrails + evals ampliados | 20 h | 11 |
+| 9 | **Guardrails + evals ampliados** ✅ | 20 h | 11 |
 | 10 | Contenedor + CI/CD + infraestructura | 24 h | 11 |
 | 11 | Deploy, observabilidad, cierre TFP | 20 h | — |
 | | **Total** | **~156 h** | ~7 semanas a 22 h/sem |
@@ -1147,11 +1147,13 @@ Clasificar con heurísticas (longitud, presencia de tool_calls previas, keywords
 | 9.B.5 | `RubricMiddleware` | `deepagents` expone `RubricMiddleware` — evaluar si sustituye parte del judge propio. |
 
 **DoD Sprint 9**
-- [ ] ≥30 casos en `evals/dataset.jsonl`; ≥5 de memoria y ≥4 de guardrails.
-- [ ] Judge multi-dimensión con score ponderado y umbral 0.7.
-- [ ] `--mode mock` en CI **detecta** una regresión inyectada a propósito (test del test).
-- [ ] `docs/benchmarks.md` con la comparativa Deep Agents vs POC v1 vs POC v2.
-- [ ] Guardrails con tests: 5 prompts de inyección bloqueados, 0 falsos positivos en los 30 casos legítimos.
+- [x] ≥30 casos en `evals/dataset.jsonl`; ≥5 de memoria y ≥4 de guardrails. *(PR #48: 30 casos totales, 5 memoria, 5 guardrails)*
+- [x] Judge multi-dimensión con score ponderado y umbral 0.7. *(PR #49: rubric POC v2 `riasec_accuracy 0.4, career_relevance 0.3, tone 0.2, safety 0.1`, passingScore=0.7, modelo Haiku 4.5 allowlist IAM)*
+- [x] `--mode mock` en CI **detecta** una regresión inyectada a propósito (test del test). *(PR #50: 3 tests con monkeypatch sobre los handlers reales; tambien cerro un bug real: la heuristica de matching no verificaba `expected_careers_count`)*
+- [x] `docs/benchmarks.md` con la comparativa Deep Agents vs POC v1 vs POC v2. *(PR #51: cifras POC verbatim, Deep Agent marcado "Pendiente -- Sprint 11" honestamente)*
+- [x] Guardrails con tests: 5 prompts de inyección bloqueados, 0 falsos positivos en los 30 casos legítimos. *(ampliado por PR #48: 25 casos legitimos no son flaggeados por `tests/agent/guardrails.py::test_no_eval_dataset_user_message_triggers_the_guardrail`)*
+
+> **Sprint 9 cerrado 2026-08-04.** 10 PRs individuales (#43, #44, #45, #46, #47, #48, #49, #50, #51, #52), 352 tests pytest passing, 30/30 evals `--mode mock` passing, gate completo verde. Validacion empirica del RubricMiddleware (subir JudgeScore via self-evaluation in-loop) queda para Sprint 11 -- ver `docs/rubric-middleware-evaluation.md` SS6.
 
 ---
 
@@ -1543,7 +1545,7 @@ SPARK_API_PORT=8080                         # 8000 lo usa el backend en dev
 | **R-3** | `01-devops` borró el CI de Python hace 1 día | Bloquea Sprint 10 | R1–R4 de §6.1 son **prerrequisito**. Plan B: CI local en este repo hasta que existan. |
 | **R-4** | El contador de budget es in-process | Se rompe con `--workers > 1` o réplicas | Tarea 7.E.4: moverlo al store. |
 | **R-5** | Deriva de documentación generalizada | README, IMPROVEMENTS, docs de `01-devops` e infra desalineados | Cada sprint incluye actualización documental en su DoD. |
-| **R-6** | Coste de la extracción langmem | Un LLM call extra por sesión | `ReflectionExecutor` diferido (30 s) + Haiku. Medir en Sprint 9.B.4. |
+| **R-6** | Coste de la extracción langmem | Un LLM call extra por sesión | `ReflectionExecutor` diferido (30 s) + Haiku. Doc y tablas comparativas listas en `docs/benchmarks.md` (PR #51); medición real pendiente de Sprint 11 live mode. |
 
 ---
 
