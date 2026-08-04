@@ -14,6 +14,7 @@ from src.agent import create_spark_agent
 from src.budget import reset_session_budget, set_active_session
 from src.config import get_settings
 from src.observability.langsmith import configure_langsmith
+from src.persistence import build_persistence
 from src.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -41,27 +42,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # LANGSMITH_* env vars that langchain-aws / deepagents read automatically.
     configure_langsmith()
 
-    # Create the Deep Agent (compiled LangGraph state graph).
-    graph = create_spark_agent()
+    # Checkpointer (short-term, per-thread_id) + store (long-term, per-user
+    # once Sprint 7 wires real user_ids). Built once for the app lifetime so
+    # sqlite/postgres connection pools are shared and closed cleanly here.
+    async with build_persistence() as persistence:
+        # Create the Deep Agent (compiled LangGraph state graph).
+        graph = create_spark_agent(
+            checkpointer=persistence.checkpointer,
+            store=persistence.store,
+        )
 
-    # Wrap the compiled graph in a LangGraphAgent so AG-UI knows how to
-    # stream events from it (messages, tool calls, reasoning, state updates,
-    # subagent streams).
-    langgraph_agent = LangGraphAgent(
-        name=settings.agent_name,
-        graph=graph,
-        description=(
-            "Spark Match vocational advisor: conversational RIASEC "
-            "assessment, career matching, and personalized action plans."
-        ),
-    )
+        # Wrap the compiled graph in a LangGraphAgent so AG-UI knows how to
+        # stream events from it (messages, tool calls, reasoning, state
+        # updates, subagent streams).
+        langgraph_agent = LangGraphAgent(
+            name=settings.agent_name,
+            graph=graph,
+            description=(
+                "Spark Match vocational advisor: conversational RIASEC "
+                "assessment, career matching, and personalized action plans."
+            ),
+        )
 
-    # Store references for health checks / introspection.
-    app.state.graph = graph
-    app.state.langgraph_agent = langgraph_agent
-    app.state.settings = settings
+        # Store references for health checks / introspection.
+        app.state.graph = graph
+        app.state.langgraph_agent = langgraph_agent
+        app.state.settings = settings
 
-    yield
+        yield
 
     logger.info("Spark Match agent stopped")
 
