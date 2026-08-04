@@ -17,6 +17,7 @@ import pytest
 from langchain_core.language_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.memory import InMemorySaver
 
 from src.agent.factory import create_spark_agent
 
@@ -159,3 +160,68 @@ class TestMaxTurnsActuallyStopsTheGraph:
         ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
         assert len(ai_messages) == 1
         assert "límite" not in ai_messages[-1].content.lower()
+
+
+class TestCheckpointerPersistsConversationAcrossInvocations:
+    """Regression test for 6.F/6.G — a real ``thread_id`` round trip.
+
+    ``create_spark_agent()`` accepts an optional ``checkpointer``; without
+    one (the default, used by every other test in this file) each
+    ``ainvoke`` starts from a blank slate regardless of ``thread_id``. These
+    tests prove that when a checkpointer IS wired in, LangGraph genuinely
+    persists conversation state keyed by ``thread_id`` — the whole point of
+    Sprint 6 — and that different ``thread_id``s stay isolated from
+    each other.
+    """
+
+    async def test_two_turns_with_the_same_thread_id_share_history(self):
+        fake = ToolCallingFakeChatModel(
+            messages=iter(
+                [
+                    AIMessage(content="Hola! ¿En qué puedo ayudarte?"),
+                    AIMessage(content="Claro, ya recuerdo lo que conversamos antes."),
+                ]
+            ),
+        )
+        checkpointer = InMemorySaver()
+        agent = create_spark_agent(model=fake, checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "same-thread"}}
+
+        await agent.ainvoke(
+            {"messages": [HumanMessage(content="hola, soy Juan y me gusta la biología")]},
+            config=config,
+        )
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content="¿de qué hablamos antes?")]},
+            config=config,
+        )
+
+        human_messages = [m for m in result["messages"] if isinstance(m, HumanMessage)]
+        # Both turns' human messages are in the checkpointed state — proves
+        # the second invocation did NOT start from a blank slate.
+        assert len(human_messages) == 2
+        assert "Juan" in human_messages[0].content
+
+    async def test_different_thread_ids_do_not_share_history(self):
+        fake = ToolCallingFakeChatModel(
+            messages=iter([AIMessage(content="Hola!"), AIMessage(content="Hola, bienvenido!")]),
+        )
+        checkpointer = InMemorySaver()
+        agent = create_spark_agent(model=fake, checkpointer=checkpointer)
+
+        await agent.ainvoke(
+            {"messages": [HumanMessage(content="hola, soy Juan")]},
+            config={"configurable": {"thread_id": "thread-a"}},
+        )
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content="hola")]},
+            config={"configurable": {"thread_id": "thread-b"}},
+        )
+
+        human_messages = [m for m in result["messages"] if isinstance(m, HumanMessage)]
+        # thread-b starts fresh: only its own message, never Juan's from
+        # thread-a. This is the isolation half of the DoD (full user_id
+        # isolation lands in Sprint 7; this only proves thread-level
+        # isolation of the checkpointer itself).
+        assert len(human_messages) == 1
+        assert "Juan" not in human_messages[0].content
