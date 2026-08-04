@@ -234,3 +234,121 @@ class TestRunnerMock:
 
         output = _run_mock_case(case)
         assert output  # non-empty
+
+
+class TestMockModeDetectsHandlerRegressions:
+    """Sprint 9, task 9.B.3 -- "the mock fails when a handler is broken
+    on purpose".
+
+    Sprint 5, task 5.7 closed the *tautological* mock (B9): ``_run_mock_case``
+    now invokes the real ``evaluate_riasec_profile_handler`` /
+    ``calculate_affinity_handler`` instead of embedding ``expected_riasec``
+    directly. This class proves the bar has teeth -- injecting a regression
+    in either handler must surface as a failing ``run_eval(mode="mock")``
+    case. Without these tests, a future regression that turns the handler
+    into a no-op or a constant could pass ``make qa`` silently (the dataset
+    would still load, mock would still produce output, only the *content*
+    would be wrong).
+
+    The patching targets the source module (``src.tools.assessment.handler``,
+    ``src.tools.matching.handler``). The local ``from ... import ...``
+    inside ``_run_mock_case`` re-reads the attribute on every call, so
+    ``monkeypatch.setattr(src_module, "handler_name", buggy)`` reaches the
+    mock runner without re-wiring imports.
+    """
+
+    def test_baseline_no_injection_all_assessment_cases_pass(self):
+        """Sanity check: without any injected bug, the dataset's
+        assessment cases all pass in mock mode. If THIS test fails the
+        injected-bug tests below are meaningless (they would fail too,
+        for the wrong reason)."""
+        from evals.dataset import load_dataset
+        from evals.runner import _mock_evaluate, _run_mock_case
+
+        cases = [c for c in load_dataset() if c.expected_riasec]
+        assert cases, "no assessment cases in the dataset"
+
+        for case in cases:
+            output = _run_mock_case(case)
+            passed, reason = _mock_evaluate(case, output)
+            assert passed is True, (
+                f"baseline case {case.id} failed without any injected bug: {reason!r}"
+            )
+
+    def test_injected_assessment_handler_bug_fails_at_least_one_case(self):
+        """Inject a "always return XXX" bug into the assessment handler.
+        The mock runner calls the real handler, so the resulting output
+        will contain ``XXX`` (or no RIASEC code at all) instead of the
+        expected code, and the dataset's RIASEC-overlap heuristic in
+        ``_mock_evaluate`` must reject it.
+
+        Verifies that a regression in the assessment handler cannot
+        sneak past CI by accident."""
+        from src.tools import assessment as assessment_pkg
+
+        def always_xxx(*_args: object, **_kwargs: object) -> dict[str, object]:
+            return {
+                "status": "success",
+                "data": {
+                    "riasec_code": "XXX",
+                    "scores": {"R": 1, "I": 1, "A": 1, "S": 1, "E": 1, "C": 1},
+                    "dominant_types": [],
+                    "interpretation": "injected-bug output",
+                },
+                "errors": None,
+            }
+
+        # Bind through the package to reach the symbol ``_run_mock_case``
+        # imports locally.
+        original = assessment_pkg.handler.evaluate_riasec_profile_handler
+        assessment_pkg.handler.evaluate_riasec_profile_handler = always_xxx
+        try:
+            from evals.runner import run_eval
+
+            results = run_eval(mode="mock")
+        finally:
+            assessment_pkg.handler.evaluate_riasec_profile_handler = original
+
+        assessment_failures = [r for r in results if r.case_id.startswith("assessment_")]
+        assert assessment_failures, "no assessment cases in the dataset"
+        failed = [r for r in assessment_failures if not r.passed]
+        assert failed, (
+            "injected 'always-XXX' bug went undetected: all assessment "
+            "cases still passed the mock-mode bar"
+        )
+        # Sanity: the heuristic must have caught the wrong code, not
+        # passed it through for some unrelated reason.
+        assert any("XXX" in r.output or "FAIL" in r.reason for r in failed), (
+            f"unexpected failure mode: {[r.reason for r in failed]!r}"
+        )
+
+    def test_injected_matching_handler_bug_fails_at_least_one_case(self):
+        """Inject a "return empty match list" bug into the matching
+        handler. The matching cases (``expected_careers_count`` set)
+        feed the handler's output through ``_run_mock_case`` and then
+        expect a non-empty match list with the requested code -- an
+        empty list must trip the bar.
+
+        Verifies the matching-side half of the same regression-detection
+        contract."""
+        from src.tools import matching as matching_pkg
+
+        def empty_matches(*_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"status": "success", "data": {"matches": []}, "errors": None}
+
+        original = matching_pkg.handler.calculate_affinity_handler
+        matching_pkg.handler.calculate_affinity_handler = empty_matches
+        try:
+            from evals.runner import run_eval
+
+            results = run_eval(mode="mock")
+        finally:
+            matching_pkg.handler.calculate_affinity_handler = original
+
+        matching_failures = [r for r in results if r.case_id.startswith("matching_")]
+        assert matching_failures, "no matching cases in the dataset"
+        failed = [r for r in matching_failures if not r.passed]
+        assert failed, (
+            "injected 'empty matches' bug went undetected: all matching "
+            "cases still passed the mock-mode bar"
+        )
