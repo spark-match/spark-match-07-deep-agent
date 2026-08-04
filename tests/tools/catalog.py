@@ -42,3 +42,28 @@ class TestCatalogHandler:
         assert len(result["data"]["careers"]) > 0
         # Not a fallback - it's a real filter match
         assert result["data"]["fallback_used"] is False
+
+
+class TestCareerCatalogSize:
+    """Sprint 8, task 8.7 DoD: >=20 careers in data/careers/.
+
+    Regression guard: catches an accidental deletion or a malformed new
+    entry (frontmatter parse failure silently dropping a file) that would
+    take the real catalog back under the DoD threshold, without needing
+    to hardcode an exact count that would break every time content is
+    added (a content-only, no-code-review-needed change per
+    data/careers/README.md).
+    """
+
+    def test_catalog_has_at_least_twenty_careers(self):
+        from src.tools.catalog.loader import load_career_catalog
+
+        careers = load_career_catalog()
+        assert len(careers) >= 20
+
+    def test_all_career_ids_are_unique(self):
+        from src.tools.catalog.loader import load_career_catalog
+
+        careers = load_career_catalog()
+        ids = [c["id"] for c in careers]
+        assert len(ids) == len(set(ids))
