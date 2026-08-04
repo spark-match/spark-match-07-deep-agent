@@ -99,10 +99,10 @@ def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
 
     Pure business logic - no @tool decorator. Testable without LLM.
 
-    Budget enforcement (Sprint 2 Ã‚Â§4.2): if the active session has already
+    Budget enforcement (Sprint 2 §4.2): if the active session has already
     consumed ``settings.max_web_searches_per_session`` web searches, refuse
     the call with ``status="budget_exhausted"`` instead of burning more
-    Tavily quota.
+    Tavily quota. A cap of ``0`` disables the budget entirely (unlimited).
 
     Args:
         query: Search query
@@ -112,10 +112,11 @@ def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
         Structured dict with status, data, errors.
     """
     settings = get_settings()
+    cap = settings.max_web_searches_per_session
 
-    # Budget guard - check before doing any work
+    # Budget guard - check before doing any work. cap <= 0 means unlimited.
     current_count = budget.get_web_search_count()
-    if current_count >= settings.max_web_searches_per_session:
+    if cap > 0 and current_count >= cap:
         return _refuse_budget_exceeded()
 
     if not query or not query.strip():
@@ -128,11 +129,14 @@ def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
     if not isinstance(max_results, int) or max_results < 1:
         max_results = 5
 
-    # Try Tavily first (better results for LLM consumption)
+    # Try Tavily first (better results for LLM consumption). Only count
+    # this attempt against the budget if it actually produced results —
+    # otherwise we fall through to DuckDuckGo below and must not charge
+    # the session twice for one logical web_search call.
     try:
         results = _search_tavily(query, max_results)
-        budget.increment_web_search()
         if results:
+            budget.increment_web_search()
             logger.info("Web search completed via Tavily: %d results", len(results))
             return {
                 "status": "success",

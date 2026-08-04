@@ -19,27 +19,59 @@ from src.tools.catalog.loader import Career, load_career_catalog
 _POSITION_WEIGHTS: tuple[float, ...] = (3.0, 2.0, 1.0)
 
 
-def _riasec_similarity(profile_code: str, career_code: str) -> float:
-    """Calculate RIASEC similarity score (0-100).
+def _raw_riasec_score(profile: str, career: str) -> float:
+    """Raw (unnormalized) positional-weighted RIASEC match score.
 
-    Uses positional weighting: first letter = most important.
-    Matches in same position score higher than matches in different positions.
+    For each letter in ``profile``, every matching letter in ``career``
+    contributes: the same-position bonus (``weight[i] * 10``) if the
+    indices align, otherwise the cross-position bonus (``weight[j] * 5``).
+    A code with repeated letters can match the same profile position
+    multiple times — this is intentional here; it is what makes
+    ``_riasec_similarity``'s self-match normalization (see below) always
+    an upper bound instead of a fixed constant that degenerate inputs
+    could exceed.
     """
     score = 0.0
-    profile = profile_code[:3]
-
     for i, letter in enumerate(profile):
-        for j, career_letter in enumerate(career_code[:3]):
+        for j, career_letter in enumerate(career):
             if letter == career_letter:
-                # Same position match scores highest
                 if i == j:
                     score += _POSITION_WEIGHTS[i] * 10
                 else:
                     score += _POSITION_WEIGHTS[j] * 5
+    return score
 
-    # Normalize to 0-100
-    max_possible = sum(w * 10 for w in _POSITION_WEIGHTS)
-    return round((score / max_possible) * 100, 1)
+
+def _riasec_similarity(profile_code: str, career_code: str) -> float:
+    """Calculate RIASEC similarity score (0-100).
+
+    Uses positional weighting: first letter = most important.
+    Matches in the same position score higher than matches in a different
+    position.
+
+    Normalized against the profile's own best-possible match (itself),
+    not a fixed constant. For a well-formed RIASEC code (3 distinct
+    letters, as produced by ``evaluate_riasec_profile``) self-match always
+    equals 60 — the same value the old fixed denominator used — so this
+    is a no-op for real input. A malformed/degenerate code with repeated
+    letters can score *higher* against itself than a fixed denominator of
+    60 allows (verified exhaustively: self-match is the maximum raw score
+    achievable against any 3-letter career code, for all 216 possible
+    3-letter profile codes over the RIASEC alphabet), which previously
+    pushed the reported percentage over 100%. ``min(100.0, ...)`` alone
+    would have masked that — every degenerate input would report the same
+    100%, indistinguishable from each other — so the denominator itself
+    has to scale with the profile, not just the final clamp.
+    """
+    profile = profile_code[:3]
+    career = career_code[:3]
+    raw_score = _raw_riasec_score(profile, career)
+    self_match = _raw_riasec_score(profile, profile)
+    if self_match <= 0:
+        return 0.0
+    # Belt-and-suspenders clamp for floating-point rounding; mathematically
+    # the ratio is already bounded to [0, 1] given self_match's property above.
+    return round(min(100.0, (raw_score / self_match) * 100), 1)
 
 
 def _score_career(profile_code: str, career: Career) -> dict[str, Any]:
