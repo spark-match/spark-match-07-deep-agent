@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from src.agent.factory import create_spark_agent
+from src.agent.factory import _resolve_model, create_spark_agent
 
 
 class ToolCallingFakeChatModel(GenericFakeChatModel):
@@ -81,6 +81,29 @@ def _clean_settings_cache():
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+class TestResolveModel:
+    """Sprint 8, task 8.6: max_tokens threaded through model resolution."""
+
+    def test_base_chat_model_passes_through_unchanged(self):
+        """Test fakes (BaseChatModel instances) must not be touched --
+        max_tokens only applies to string specs."""
+        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
+        resolved = _resolve_model(fake, max_tokens=2048)
+        assert resolved is fake
+
+    def test_string_spec_applies_max_tokens(self):
+        """Real resolution path (production): a Bedrock spec string must
+        build with the given max_tokens. This constructs a real
+        ChatBedrock instance but does NOT invoke it, so it needs no AWS
+        credentials (boto3 clients aren't validated at construction) --
+        confirmed empirically, not assumed."""
+        resolved = _resolve_model(
+            "bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            max_tokens=777,
+        )
+        assert resolved.max_tokens == 777
 
 
 class TestAgentGraphStructure:
