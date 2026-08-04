@@ -36,7 +36,7 @@ class RiasecProfile(TypedDict):
 _TYPE_NAMES: dict[str, str] = {
     "R": "Realista",
     "I": "Investigativo",
-    "A": "ArtÃƒÂ­stico",
+    "A": "Artístico",
     "S": "Social",
     "E": "Emprendedor",
     "C": "Convencional",

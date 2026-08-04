@@ -17,11 +17,18 @@ Both are added to the agent via the ``middleware=[...]`` argument to
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain_core.messages import AIMessage
-from langgraph.graph import END
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    AgentState,
+    ToolCallRequest,
+    hook_config,
+)
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.runtime import Runtime
+from langgraph.types import Command
 
 from src.config import get_settings
 
@@ -50,14 +57,15 @@ class MaxTurnsMiddleware(AgentMiddleware):
 
     Counts each model invocation. When the cap is reached, the middleware
     returns a state update with a final ``AIMessage`` explaining the cutoff
-    and routes the graph to ``END`` via ``goto``.
+    and routes the graph to ``"end"`` via ``jump_to``.
 
     The turn count is approximate (counts every model call, including
     subagent delegations). For an exact cap use LangGraph's
     ``recursion_limit`` (we set a high value to let our guard fire first).
     """
 
-    def after_model(self, state: AgentState, runtime: object) -> dict[str, Any] | None:
+    @hook_config(can_jump_to=["end"])
+    def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         """Inspect messages after each model call; cap if too many."""
         settings = get_settings()
         cap = settings.max_turns
@@ -75,8 +83,13 @@ class MaxTurnsMiddleware(AgentMiddleware):
                 cap,
                 session,
             )
-            # Return a final assistant message and route to END. The goto
-            # in middleware state updates takes effect on the next node.
+            # jump_to is the real LangChain 1.x contract for cutting the
+            # graph short from a middleware hook. LangGraph silently drops
+            # unknown state keys, so a plain "goto" key here is a no-op:
+            # the graph keeps running past settings.max_turns. The
+            # @hook_config(can_jump_to=["end"]) decorator above is what
+            # registers the conditional edge that makes "end" a valid
+            # destination for this hook.
             return {
                 "messages": [
                     AIMessage(
@@ -87,7 +100,7 @@ class MaxTurnsMiddleware(AgentMiddleware):
                         ),
                     ),
                 ],
-                "goto": END,
+                "jump_to": "end",
             }
         return None
 
@@ -101,16 +114,26 @@ class AssessmentOnceMiddleware(AgentMiddleware):
 
     Inspects the conversation history for prior calls to the tool and
     short-circuits repeats with a clear error message.
+
+    Implements both the sync (``wrap_tool_call``) and async
+    (``awrap_tool_call``) hooks. LangChain's middleware framework requires
+    whichever one matches the graph's invocation mode (``invoke``/``stream``
+    vs ``ainvoke``/``astream``) — defining only one raises
+    ``NotImplementedError`` for every tool call in the other mode. The
+    production API (``ag-ui-langgraph``) drives the graph exclusively via
+    ``astream_events``, so the async hook is required, not optional.
     """
 
-    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
-        """Inspect the tool name; bypass if it's a repeat assessment call."""
+    def _find_repeat_response(self, request: ToolCallRequest) -> ToolMessage | None:
+        """Return a refusal ``ToolMessage`` if this is a repeat assessment call.
+
+        Returns ``None`` when the call should proceed (either it targets a
+        different tool, or no prior assessment call exists in history).
+        """
         tool_call = request.tool_call
         if tool_call.get("name") != ASSESSMENT_TOOL_NAME:
-            return handler(request)
+            return None
 
-        # Inspect messages for prior tool calls with this name. If found,
-        # refuse the call with a clear error.
         state = request.state
         messages = state.get("messages", []) if state else []
         prior_calls = sum(
@@ -119,26 +142,43 @@ class AssessmentOnceMiddleware(AgentMiddleware):
             for tc in getattr(m, "tool_calls", []) or []
             if tc.get("name") == ASSESSMENT_TOOL_NAME
         )
-        if prior_calls > 0:
-            session = _get_session_id()
-            logger.warning(
-                "Refusing repeat %s call (prior calls=%d) for session=%s",
-                ASSESSMENT_TOOL_NAME,
-                prior_calls,
-                session,
-            )
-            from langchain_core.messages import ToolMessage
+        if prior_calls == 0:
+            return None
 
-            return ToolMessage(
-                content=(
-                    f"Error: {ASSESSMENT_TOOL_NAME} was already called in this "
-                    "session. Each conversation may evaluate the RIASEC profile "
-                    "only once. If the result was lost, ask the user to redo "
-                    "the assessment."
-                ),
-                tool_call_id=tool_call.get("id", ""),
-            )
-        return handler(request)
+        session = _get_session_id()
+        logger.warning(
+            "Refusing repeat %s call (prior calls=%d) for session=%s",
+            ASSESSMENT_TOOL_NAME,
+            prior_calls,
+            session,
+        )
+        return ToolMessage(
+            content=(
+                f"Error: {ASSESSMENT_TOOL_NAME} was already called in this "
+                "session. Each conversation may evaluate the RIASEC profile "
+                "only once. If the result was lost, ask the user to redo "
+                "the assessment."
+            ),
+            tool_call_id=tool_call.get("id", ""),
+        )
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        """Inspect the tool name; bypass if it's a repeat assessment call."""
+        refusal = self._find_repeat_response(request)
+        return refusal if refusal is not None else handler(request)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        """Async counterpart of :meth:`wrap_tool_call` — same refusal logic."""
+        refusal = self._find_repeat_response(request)
+        return refusal if refusal is not None else await handler(request)
 
 
 __all__ = [

@@ -54,8 +54,13 @@ class Settings(BaseSettings):
     log_level: LogLevel = LogLevel.INFO
 
     # --- Model Configuration ---
+    # model_id must stay within the Bedrock allowlist enforced by IAM in
+    # spark-match-02-infrastructure. Only these two inference profiles are
+    # permitted; anything else raises AccessDeniedException at call time.
     model_provider: str = "bedrock"
-    model_id: str = "us.anthropic.claude-sonnet-4-20250514"
+    model_id: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    # Cheaper/faster model for low-stakes routing decisions (Sprint 8 router).
+    fast_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     aws_region: str = "us-east-1"
 
     # --- Agent Configuration ---

@@ -125,7 +125,7 @@ El servidor arranca en `http://localhost:8000`.
 
 ```bash
 # Instalar dependencias de desarrollo
-uv sync --all-extras
+uv sync --all-groups
 
 # Ejecutar tests
 uv run pytest
@@ -232,7 +232,8 @@ Todas las variables usan el prefijo `SPARK_` y se leen desde `.env` (ver `.env.e
 |---|---|---|
 | `SPARK_ENVIRONMENT` | `local` | Entorno de deployment: `local` \| `agentcore` |
 | `SPARK_MODEL_PROVIDER` | `bedrock` | Proveedor del LLM: `bedrock` \| `openai` \| `anthropic` \| `ollama` |
-| `SPARK_MODEL_ID` | `us.anthropic.claude-sonnet-4-20250514` | ID del modelo (depende del provider) |
+| `SPARK_MODEL_ID` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | ID del modelo (depende del provider) |
+| `SPARK_FAST_MODEL_ID` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Modelo rápido/barato para decisiones de bajo riesgo |
 | `SPARK_AWS_REGION` | `us-east-1` | Región de AWS (para Bedrock) |
 | `SPARK_API_HOST` | `0.0.0.0` | Host del servidor FastAPI |
 | `SPARK_API_PORT` | `8000` | Puerto del servidor |
@@ -255,8 +256,8 @@ Problemas comunes y cómo resolverlos:
 | `ValidationError: SPARK_MODEL_ID` | Variable mal escrita o sin prefijo `SPARK_` | Ver `.env.example` y respetar prefijo `SPARK_` |
 | Tavily devuelve 401 | API key inválida o expirada | Regenerar key en https://tavily.com y actualizar `.env` |
 | Frontend no se conecta al agente | CORS bloqueado | Agregar el origen del frontend a `SPARK_CORS_ORIGINS` |
-| Tests fallan con `ImportError` | `uv sync --all-extras` no ejecutado | `uv sync --all-extras` instala pytest/ruff/mypy |
-| El agente no llama a las tools | El system prompt no las está referenciando | Ver `src/prompts/system.py` y que liste las tools explícitamente |
+| Tests fallan con `ImportError` | `uv sync --all-groups` no ejecutado | `uv sync --all-groups` instala pytest/ruff/mypy |
+| El agente no llama a las tools | El system prompt no las está referenciando | Ver `src/prompts/*.md` (cargados por `src/prompts/loader.py`) y que listen las tools explícitamente |
 
 ## Migración a producción (AgentCore)
 
