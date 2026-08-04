@@ -45,8 +45,10 @@ import unicodedata
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from langgraph.runtime import Runtime
+
+from src.agent.message_utils import last_human_message_text
 
 logger = logging.getLogger(__name__)
 
@@ -101,21 +103,6 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 )
 
 
-def _last_human_message_text(state: AgentState) -> str:
-    """Return the content of the most recent ``HumanMessage`` in state.
-
-    Returns an empty string if there is none yet (first ``before_model``
-    call of a turn where the graph was invoked with no human input, e.g.
-    a resumed tool loop) — an empty string never matches any pattern.
-    """
-    messages = state.get("messages", [])
-    for message in reversed(messages):
-        if isinstance(message, HumanMessage):
-            content = message.content
-            return content if isinstance(content, str) else str(content)
-    return ""
-
-
 def detect_prompt_injection(text: str) -> str | None:
     """Return the matched pattern's source string, or ``None`` if clean.
 
@@ -143,7 +130,7 @@ class GuardrailsMiddleware(AgentMiddleware):
     @hook_config(can_jump_to=["end"])
     def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         """Check the latest user turn; short-circuit on an injection match."""
-        text = _last_human_message_text(state)
+        text = last_human_message_text(state)
         matched_pattern = detect_prompt_injection(text)
         if matched_pattern is None:
             return None
