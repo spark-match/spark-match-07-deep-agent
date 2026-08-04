@@ -125,7 +125,7 @@ El servidor arranca en `http://localhost:8000`.
 
 ```bash
 # Instalar dependencias de desarrollo
-uv sync --all-extras
+uv sync --all-groups
 
 # Ejecutar tests
 uv run pytest
@@ -256,8 +256,8 @@ Problemas comunes y cómo resolverlos:
 | `ValidationError: SPARK_MODEL_ID` | Variable mal escrita o sin prefijo `SPARK_` | Ver `.env.example` y respetar prefijo `SPARK_` |
 | Tavily devuelve 401 | API key inválida o expirada | Regenerar key en https://tavily.com y actualizar `.env` |
 | Frontend no se conecta al agente | CORS bloqueado | Agregar el origen del frontend a `SPARK_CORS_ORIGINS` |
-| Tests fallan con `ImportError` | `uv sync --all-extras` no ejecutado | `uv sync --all-extras` instala pytest/ruff/mypy |
-| El agente no llama a las tools | El system prompt no las está referenciando | Ver `src/prompts/system.py` y que liste las tools explícitamente |
+| Tests fallan con `ImportError` | `uv sync --all-groups` no ejecutado | `uv sync --all-groups` instala pytest/ruff/mypy |
+| El agente no llama a las tools | El system prompt no las está referenciando | Ver `src/prompts/*.md` (cargados por `src/prompts/loader.py`) y que listen las tools explícitamente |
 
 ## Migración a producción (AgentCore)
 
