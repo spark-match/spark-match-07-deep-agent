@@ -21,12 +21,12 @@ El plan de finalización vive en **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** 
 
 | Capacidad | Estado |
 |---|---|
-| Memoria por sesión y entre sesiones | **Cerrado (Sprint 6).** `checkpointer=`/`store=`/`backend=` cableados en `create_spark_agent()` y en el lifespan de `app.py`. `user_id` sigue siendo un placeholder fijo (`src/agent/user_context.py`) hasta que Sprint 7 provea el real vía JWT — el particionado por usuario existe estructuralmente pero no hay aislamiento real todavía. |
-| Autenticación / autorización | **No existe.** `POST /ag-ui` es público. Sprint 7. |
+| Memoria por sesión y entre sesiones | **Cerrado (Sprint 6).** `checkpointer=`/`store=`/`backend=` cableados en `create_spark_agent()` y en el lifespan de `app.py`. `user_id` real desde el JWT desde Sprint 7 (antes placeholder fijo) — ver fila de Autenticación. |
+| Autenticación / autorización | **Núcleo cerrado (Sprint 7, PRs #A.7).** `POST /ag-ui` exige JWT válido (`src/auth/`); `thread_id` derivado + registro de propiedad (403 cruzado); `runtime.context.user_id/role/email` disponibles en todo middleware/tool vía `context_schema=AgentContext`. Pendiente: CORS validator, cabeceras de seguridad, rate limiting y budget-por-usuario en el store (tareas 7.E.1–7.E.4, PR de endurecimiento aparte). Ver `docs/auth.md`. |
 | `langmem` | **Activo.** `src/memory/profile_manager.py` usa `create_memory_store_manager` + `ReflectionExecutor`; `src/agent/memory_middleware.py` hidrata/persiste el perfil. |
 | `skills/` | Nunca se carga (`skills=` no se pasa a `create_deep_agent`). |
-| Guardrail de turnos | **Roto.** `MaxTurnsMiddleware` usa `goto`; LangChain 1.x espera `jump_to`. |
-| Modelo por defecto | **Fuera del allowlist IAM** de `spark-match-02-infrastructure`. |
+| Guardrail de turnos | **Corregido (Sprint 5, B1).** `MaxTurnsMiddleware` usa `jump_to` (`@hook_config(can_jump_to=["end"])`), no `goto`. |
+| Modelo por defecto | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` — dentro del allowlist IAM de `spark-match-02-infrastructure`. |
 | Contenedor | No hay `Dockerfile` (solo un `.dockerignore` huérfano). |
 
 > **Regla**: `README.md` e `IMPROVEMENTS.md` están desactualizados y describen features que no existen. La §2 del `ROADMAP-2026-08.md` es la única fuente de verdad verificada. No cites el README como evidencia.
@@ -447,7 +447,7 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 |---|---|---|---|
 | **5** | Correcciones críticas (B1–B10) + deuda técnica | ✅ Cerrado 2026-08-04 | 6, 7 |
 | **6** | Memoria persistente: checkpointer + store + langmem | ✅ Cerrado 2026-08-04 | 7, 9 |
-| **7** | Auth JWT + roles + aislamiento por usuario | Pendiente | 10 |
+| **7** | Auth JWT + roles + aislamiento por usuario | 🟡 Núcleo cerrado 2026-08-04 (7.E pendiente) | 10 |
 | **8** | Tools async, skills, MCP, intent router | Pendiente | 9 |
 | **9** | Guardrails + evals ampliados | Pendiente | 11 |
 | **10** | Contenedor + CI/CD + infraestructura | Pendiente | 11 |
@@ -462,6 +462,14 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 > hasta que el Sprint 7 provea el real vía JWT — ver AGENTS.md §1.1. Sigue
 > el Sprint 7 (auth JWT), que además reemplaza ese placeholder por el
 > `user_id` real.
+>
+> **Sprint 7 — núcleo cerrado (7.A–7.D).** JWT validado (`src/auth/`),
+> `thread_id` derivado + registro de propiedad (7.B), `context_schema=AgentContext`
+> cablea `runtime.context.user_id/role/email` en todo el grafo (7.C), modelo
+> de roles/capacidades (7.D). El `user_id` placeholder del Sprint 6 queda
+> reemplazado por el real en toda request autenticada. Pendiente: 7.E
+> (CORS validator, cabeceras de seguridad, rate limiting, budget por
+> usuario en el store) en un PR de endurecimiento aparte — ver `docs/auth.md`.
 
 `IMPROVEMENTS.md` documenta los Sprints 1–4, ya cerrados. Es histórico: **no lo uses como backlog**.
 

@@ -26,6 +26,7 @@ from src.agent.subagents import (
     MATCHING_SUBAGENT,
     PLANNING_SUBAGENT,
 )
+from src.auth.context import AgentContext
 from src.config import get_settings
 from src.prompts import SYSTEM_PROMPT
 from src.tools import (
@@ -36,8 +37,9 @@ from src.tools import (
 )
 
 # Preference namespace: langmem substitutes "{user_id}" from
-# config["configurable"]["user_id"] at call time — see
-# src.agent.user_context for the Sprint 6 placeholder / Sprint 7 real value.
+# config["configurable"]["user_id"] at call time — set from the validated
+# JWT since Sprint 7 (src.api.app.ag_ui_endpoint), src.agent.user_context
+# ("local-user") for direct graph invocation without going through /ag-ui.
 PREFS_NAMESPACE = ("spark-match", "{user_id}", "prefs")
 
 
@@ -62,7 +64,8 @@ def create_spark_agent(
             multi-turn persistence — the graph still compiles and runs a
             single turn fine without it.
         store: Long-term memory (profile, preferences, memory files),
-            partitioned per ``user_id`` once Sprint 7 wires real auth.
+            partitioned per ``user_id`` from the validated JWT since Sprint 7
+            (``src.auth``/``src.api.app``).
             Same ``None``-safe behavior as ``checkpointer``.
         reflection_executor: Background ``StudentProfile`` extraction
             worker (:func:`src.memory.build_reflection_executor`).
@@ -108,14 +111,14 @@ def create_spark_agent(
         actions_permitted=("create", "update"),  # no delete: avoid accidental wipes
     )
     search_memory = create_search_memory_tool(namespace=PREFS_NAMESPACE)
-    # KNOWN GAP (closes in Sprint 7): both tools resolve "{user_id}" from
-    # config["configurable"]["user_id"] at call time. Nothing in the
-    # request path sets that key today — AG-UI only forwards thread_id, and
-    # context_schema=AgentContext (which would inject it) is Sprint 7 scope.
-    # If the model actually calls manage_prefs/search_memory before then,
-    # langmem raises a clear ConfigurationError rather than silently
-    # corrupting a namespace; still, don't expect these two tools to work
-    # end-to-end until Sprint 7 wires real auth context.
+    # Both tools resolve "{user_id}" from config["configurable"]["user_id"]
+    # at call time. Since Sprint 7, src.api.app.ag_ui_endpoint always sets
+    # that key from the validated JWT before invoking the graph, so this
+    # works end-to-end for real requests. Direct graph invocation without
+    # going through /ag-ui (most unit tests) never sets it — langmem then
+    # raises a clear ConfigurationError instead of silently corrupting a
+    # namespace, which is why factory/memory-middleware unit tests avoid
+    # actually calling these two tools.
 
     # deepagents' own memory=[...] middleware eagerly downloads the listed
     # paths through the backend on every turn, which needs a real store
@@ -151,6 +154,7 @@ def create_spark_agent(
         checkpointer=checkpointer,
         store=store,
         middleware=middleware,
+        context_schema=AgentContext,
     )
 
     return agent  # noqa: RET504
