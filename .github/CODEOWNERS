@@ -30,6 +30,7 @@
 
 /.dockerignore                             @spark-match/ai-devs
 /.env.example                              @spark-match/ai-devs
+/.mcp.json                                 @spark-match/ai-devs
 /.python-version                           @spark-match/ai-devs
 /CHANGELOG.md                              @spark-match/ai-devs
 /IMPROVEMENTS.md                           @spark-match/ai-devs

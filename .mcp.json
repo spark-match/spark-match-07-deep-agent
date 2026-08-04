@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "spark-match-agent": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "src.mcp"],
+      "description": "Spark Match vocational-guidance tools (RIASEC assessment scoring, career catalog search, career-affinity matching, web search) exposed over the Model Context Protocol via stdio. Launch from the repository root so `uv run` resolves the project's .venv. See docs/mcp.md."
+    }
+  }
+}
