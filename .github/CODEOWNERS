@@ -11,14 +11,12 @@
 #
 # Paths criticos (governance): @spark-match/product-owners
 #
-# Convencion: explicit paths, no catch-all.
+# Convencion: explicit paths, no catch-all. Solo se listan paths que
+# existen en el repo (ver AGENTS.md seccion 13, item G3): si se crea
+# /decisions/, /onboarding/, /postmortems/, /CONTRIBUTING.md o /LICENSE
+# en el futuro, anadir su entrada aqui en el mismo PR que los introduce.
 
-/decisions/                                @spark-match/product-owners
-/onboarding/                               @spark-match/product-owners
-/postmortems/                              @spark-match/product-owners
 /README.md                                 @spark-match/ai-devs @spark-match/product-owners
-/CONTRIBUTING.md                           @spark-match/ai-devs @spark-match/product-owners
-/LICENSE                                   @spark-match/ai-devs @spark-match/product-owners
 /AGENTS.md                                 @spark-match/ai-devs @spark-match/product-owners
 /ROADMAP-2026-08.md                        @spark-match/ai-devs @spark-match/product-owners
 
