@@ -19,6 +19,8 @@
 /README.md                                 @spark-match/ai-devs @spark-match/product-owners
 /CONTRIBUTING.md                           @spark-match/ai-devs @spark-match/product-owners
 /LICENSE                                   @spark-match/ai-devs @spark-match/product-owners
+/AGENTS.md                                 @spark-match/ai-devs @spark-match/product-owners
+/ROADMAP-2026-08.md                        @spark-match/ai-devs @spark-match/product-owners
 
 /.github/                                  @spark-match/ai-devs
 /data/                                     @spark-match/ai-devs
