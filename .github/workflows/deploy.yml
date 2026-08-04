@@ -1,0 +1,75 @@
+name: deploy
+
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (dev or production)'
+        type: choice
+        required: true
+        default: 'dev'
+        options:
+          - dev
+          - production
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-dev:
+    name: deploy (dev)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
+    with:
+      environment-name: dev
+      aws-region: us-east-1
+      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      dockerfile-path: Dockerfile
+      platforms: linux/arm64
+      image-tags-input: 'latest,__GITHUB_SHA_SHORT__'
+      provenance: true
+      sbom: true
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN }}
+
+  deploy-production:
+    name: deploy (production)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
+    with:
+      environment-name: production
+      aws-region: us-east-1
+      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      dockerfile-path: Dockerfile
+      platforms: linux/arm64
+      image-tags-input: 'latest,__GITHUB_SHA_SHORT__,__GITHUB_REF_NAME__'
+      provenance: true
+      sbom: true
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN }}
+
+  deploy-manual:
+    name: deploy (manual - ${{ github.event.inputs.environment }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
+    with:
+      environment-name: ${{ github.event.inputs.environment }}
+      aws-region: us-east-1
+      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      dockerfile-path: Dockerfile
+      platforms: linux/arm64
+      image-tags-input: 'latest,__GITHUB_SHA_SHORT__'
+      provenance: true
+      sbom: true
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN }}

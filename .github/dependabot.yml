@@ -1,5 +1,5 @@
-# Ecosistema "docker" se anade en el Sprint 10, cuando exista un Dockerfile
-# real (ver AGENTS.md seccion 13, item G7 y ROADMAP-2026-08.md Sprint 10).
+# Ver AGENTS.md seccion 13, item G7. Ecosistema "docker" se anade en
+# Sprint 10.B tras incorporar Dockerfile (PR #54 ya mergeado).
 version: 2
 updates:
   - package-ecosystem: "uv"
@@ -7,9 +7,10 @@ updates:
     schedule:
       interval: "weekly"
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "ci(deps)"
     labels:
       - "dependencies"
+      - "sprint-10"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -20,3 +21,13 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci(deps)"
+    labels:
+      - "dependencies"
+      - "docker"

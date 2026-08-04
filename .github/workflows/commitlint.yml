@@ -1,0 +1,25 @@
+name: commitlint
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+concurrency:
+  group: commitlint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  commitlint:
+    name: commitlint
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-commitlint.yml@main
+    with:
+      config-path: '.commitlintrc.json'
+      commit-depth: 20
+      help-url: 'https://github.com/spark-match/spark-match-08-deep-agent/blob/main/AGENTS.md'
+      skip-release-please: true

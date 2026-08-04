@@ -11,11 +11,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: write
-  id-token: write
-  security-events: write
+permissions: {}
 
 jobs:
   python-ci:
@@ -23,10 +19,14 @@ jobs:
     uses: spark-match/spark-match-01-devops/.github/workflows/reusable-python-ci.yml@main
     with:
       environment-name: ci
+      working-directory: '.'
+      runs-on: ubuntu-latest
+      python-version: ${{ vars.DEFAULT_PYTHON_VERSION }}
       ruff-targets: 'src tests evals'
       mypy-targets: 'src'
       pytest-targets: 'tests'
       pytest-args: '--cov=src --cov-report=xml:coverage.xml --cov-fail-under=80'
+      coverage-output: coverage.xml
       coverage-threshold: '80'
 
   sonar-python:
@@ -40,6 +40,7 @@ jobs:
       tests: 'tests,evals'
       working-directory: '.'
       env: 'ci'
+      python-version: ${{ vars.DEFAULT_PYTHON_VERSION }}
       sync-groups: 'dev'
       pytest-targets: 'tests'
       pytest-args: '--cov=src --cov-report=xml:coverage.xml --cov-fail-under=80'

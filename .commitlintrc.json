@@ -1,59 +1,49 @@
 {
   "extends": ["@commitlint/config-conventional"],
   "rules": {
-    "type-enum": [
-      2,
-      "always",
-      [
-        "feat",
-        "fix",
-        "chore",
-        "docs",
-        "refactor",
-        "test",
-        "build",
-        "ci",
-        "perf",
-        "revert"
-      ]
-    ],
-    "scope-enum": [
-      2,
-      "always",
-      [
-        "agent",
-        "middleware",
-        "subagents",
-        "prompts",
-        "skills",
-        "tools",
-        "catalog",
-        "matching",
-        "assessment",
-        "web-search",
-        "api",
-        "auth",
-        "memory",
-        "persistence",
-        "config",
-        "observability",
-        "mcp",
-        "evals",
-        "tests",
-        "ci",
-        "deps",
-        "docs",
-        "governance",
-        "docker",
-        "repo"
-      ]
-    ],
-    "scope-empty": [0, "never"],
+    "type-enum": [2, "always", [
+      "feat",
+      "fix",
+      "chore",
+      "docs",
+      "refactor",
+      "test",
+      "build",
+      "ci",
+      "perf",
+      "revert"
+    ]],
+    "scope-enum": [2, "always", [
+      "agent",
+      "middleware",
+      "subagents",
+      "prompts",
+      "skills",
+      "tools",
+      "catalog",
+      "matching",
+      "assessment",
+      "web-search",
+      "api",
+      "auth",
+      "memory",
+      "persistence",
+      "config",
+      "observability",
+      "mcp",
+      "evals",
+      "tests",
+      "ci",
+      "deps",
+      "docker",
+      "governance",
+      "repo"
+    ]],
+    "scope-empty": [0],
     "subject-case": [2, "always", "lower-case"],
     "subject-full-stop": [2, "never", "."],
-    "subject-empty": [2, "never"],
     "header-max-length": [2, "always", 100],
-    "body-max-line-length": [2, "always", 100],
-    "footer-max-line-length": [2, "always", 100]
-  }
+    "body-max-line-length": [0]
+  },
+  "helpUrl": "https://github.com/spark-match/spark-match-08-deep-agent/blob/main/AGENTS.md"
 }
