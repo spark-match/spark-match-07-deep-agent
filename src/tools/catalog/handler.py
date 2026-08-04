@@ -51,7 +51,7 @@ def search_careers_handler(query: str, field: str | None = None) -> dict[str, An
 
     Args:
         query: Search query (career name, skill, or description keywords)
-        field: Optional filter by field (e.g., 'TecnologÃƒÂ­a', 'Salud')
+        field: Optional filter by field (e.g., 'Tecnología', 'Salud')
 
     Returns:
         Structured dict with status, data, errors.

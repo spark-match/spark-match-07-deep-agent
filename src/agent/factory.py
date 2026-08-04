@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from deepagents import create_deep_agent
 from deepagents.middleware.subagents import SubAgent
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
@@ -26,10 +27,18 @@ from src.tools import (
 )
 
 
-def create_spark_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
+def create_spark_agent(
+    model: str | BaseChatModel | None = None,
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create and configure the Spark Match Deep Agent.
 
     Returns a compiled LangGraph state graph ready for invocation or streaming.
+
+    Args:
+        model: Override for the chat model. Accepts a Bedrock model string
+            or a pre-built ``BaseChatModel`` (e.g. ``GenericFakeChatModel``
+            in tests). Defaults to ``settings.model_string`` when omitted,
+            so production callers are unaffected.
 
     Architecture:
     - Coordinator (this agent): routes user intent, manages conversation flow.
@@ -58,7 +67,7 @@ def create_spark_agent() -> CompiledStateGraph[Any, Any, Any, Any]:
     )
 
     agent = create_deep_agent(
-        model=settings.model_string,
+        model=model if model is not None else settings.model_string,
         tools=[
             evaluate_riasec_profile,
             search_careers,

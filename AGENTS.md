@@ -443,17 +443,19 @@ Derivadas:
 
 El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resumen:
 
-| Sprint | Tema | Bloquea a |
-|---|---|---|
-| **5** | Correcciones críticas (B1–B10) + deuda técnica | 6, 7 |
-| **6** | Memoria persistente: checkpointer + store + langmem | 7, 9 |
-| **7** | Auth JWT + roles + aislamiento por usuario | 10 |
-| **8** | Tools async, skills, MCP, intent router | 9 |
-| **9** | Guardrails + evals ampliados | 11 |
-| **10** | Contenedor + CI/CD + infraestructura | 11 |
-| **11** | Deploy, observabilidad, cierre TFP | — |
+| Sprint | Tema | Estado | Bloquea a |
+|---|---|---|---|
+| **5** | Correcciones críticas (B1–B10) + deuda técnica | ✅ Cerrado 2026-08-04 | 6, 7 |
+| **6** | Memoria persistente: checkpointer + store + langmem | Pendiente | 7, 9 |
+| **7** | Auth JWT + roles + aislamiento por usuario | Pendiente | 10 |
+| **8** | Tools async, skills, MCP, intent router | Pendiente | 9 |
+| **9** | Guardrails + evals ampliados | Pendiente | 11 |
+| **10** | Contenedor + CI/CD + infraestructura | Pendiente | 11 |
+| **11** | Deploy, observabilidad, cierre TFP | Pendiente | — |
 
-> **Arranca por el Sprint 5.** B1 (el agente no se detiene) y B6 (modelo fuera del allowlist IAM) invalidan cualquier prueba posterior.
+> **Sprint 5 cerrado.** Los 10 bugs B1–B10 tienen test de regresión (PRs #25,
+> #26, #27 a `dev`). Sigue el Sprint 6 (memoria persistente) o el Sprint 7
+> (auth JWT) — ambos desbloqueados.
 
 `IMPROVEMENTS.md` documenta los Sprints 1–4, ya cerrados. Es histórico: **no lo uses como backlog**.
 
