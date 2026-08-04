@@ -232,7 +232,8 @@ Todas las variables usan el prefijo `SPARK_` y se leen desde `.env` (ver `.env.e
 |---|---|---|
 | `SPARK_ENVIRONMENT` | `local` | Entorno de deployment: `local` \| `agentcore` |
 | `SPARK_MODEL_PROVIDER` | `bedrock` | Proveedor del LLM: `bedrock` \| `openai` \| `anthropic` \| `ollama` |
-| `SPARK_MODEL_ID` | `us.anthropic.claude-sonnet-4-20250514` | ID del modelo (depende del provider) |
+| `SPARK_MODEL_ID` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | ID del modelo (depende del provider) |
+| `SPARK_FAST_MODEL_ID` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Modelo rápido/barato para decisiones de bajo riesgo |
 | `SPARK_AWS_REGION` | `us-east-1` | Región de AWS (para Bedrock) |
 | `SPARK_API_HOST` | `0.0.0.0` | Host del servidor FastAPI |
 | `SPARK_API_PORT` | `8000` | Puerto del servidor |
