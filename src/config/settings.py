@@ -111,6 +111,19 @@ class Settings(BaseSettings):
     # fast back-and-forth exchange.
     reflection_delay_seconds: int = 30
 
+    # --- Auth (Sprint 7) ---
+    # Local/dev override for the JWT signing secret. When set, this is used
+    # verbatim (as raw UTF-8 bytes) instead of resolving SSM -> Secrets
+    # Manager, so the evaluator can run and test auth fully offline (hard
+    # rule #7). In agentcore/production, leave unset and rely on
+    # jwt_secret_ssm_param.
+    jwt_secret: SecretStr | None = None
+    # SSM parameter holding the ARN of the Secrets Manager secret with the
+    # actual signing key. Same path spark-match-03-backend reads from.
+    jwt_secret_ssm_param: str = "/spark-match/secret/jwt-arn"
+    # How long the resolved secret is cached in-process before re-fetching.
+    jwt_secret_cache_seconds: int = 300
+
     @property
     def is_local(self) -> bool:
         return self.environment == Environment.LOCAL

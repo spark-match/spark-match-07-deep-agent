@@ -6,11 +6,12 @@ from contextlib import asynccontextmanager
 
 from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.endpoint import EventEncoder, RunAgentInput
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from src.agent import create_spark_agent
+from src.auth import AuthContext, assert_thread_ownership, derive_thread_id, require_auth
 from src.budget import reset_session_budget, set_active_session
 from src.config import get_settings
 from src.memory import build_reflection_executor
@@ -78,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             app.state.graph = graph
             app.state.langgraph_agent = langgraph_agent
             app.state.settings = settings
+            app.state.store = persistence.store
 
             yield
         finally:
@@ -126,27 +128,52 @@ def create_app() -> FastAPI:
     # wire the per-session budget guard: we extract thread_id from the
     # request body and set it as the active session for tool calls.
     @app.post(AG_UI_PATH)
-    async def ag_ui_endpoint(input_data: RunAgentInput, request: Request) -> StreamingResponse:
+    async def ag_ui_endpoint(
+        input_data: RunAgentInput,
+        request: Request,
+        auth: AuthContext = Depends(require_auth),  # noqa: B008
+    ) -> StreamingResponse:
         """AG-UI streaming endpoint.
 
         The frontend (04-frontend) sends messages here and receives an SSE
         stream of typed events: messages, tool calls, reasoning, state updates.
 
-        The ``thread_id`` from the request body identifies the session and is
-        used to scope the budget counters in :mod:`src.budget`.
+        Requires a valid JWT (``require_auth``, Sprint 7 task 7.A). The
+        client-supplied ``thread_id`` is untrusted (hard rule #5): it is
+        replaced by a derivation from ``(auth.user_id, thread_id)`` and its
+        ownership is checked/registered before the graph ever runs (task
+        7.B), so one user can never read or continue another user's
+        conversation.
         """
         agent: LangGraphAgent = app.state.langgraph_agent
         accept_header = request.headers.get("accept")
         encoder = EventEncoder(accept=accept_header)
 
+        thread_id = derive_thread_id(auth.user_id, input_data.thread_id)
+        await assert_thread_ownership(app.state.store, thread_id, auth.user_id)
+        input_data.thread_id = thread_id
+
         # Activate the session and reset its budget before invoking the agent.
         # Each request gets its own counters; concurrent requests on different
         # thread_ids are isolated by the ContextVar in src.budget.
-        set_active_session(input_data.thread_id)
-        reset_session_budget(input_data.thread_id)
+        set_active_session(thread_id)
+        reset_session_budget(thread_id)
 
-        # Clone the agent so each request gets isolated per-request state.
+        # Clone the agent so each request gets isolated per-request state,
+        # then attach this request's auth context. ag_ui_langgraph forwards
+        # config["configurable"] into runtime.context on every node/tool
+        # call (base_context.update(config["configurable"])), so
+        # user_id/role/email become available as runtime.context.* and as
+        # the "{user_id}" langmem namespace substitution everywhere.
         request_agent = agent.clone()
+        request_agent.config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": auth.user_id,
+                "role": auth.role,
+                "email": auth.email,
+            }
+        }
 
         async def event_generator() -> AsyncIterator[str]:
             async for event in request_agent.run(input_data):

@@ -22,6 +22,7 @@
 
 /.github/                                  @spark-match/ai-devs
 /data/                                     @spark-match/ai-devs
+/docs/                                     @spark-match/ai-devs
 /evals/                                    @spark-match/ai-devs
 /skills/                                   @spark-match/ai-devs
 /src/                                      @spark-match/ai-devs
