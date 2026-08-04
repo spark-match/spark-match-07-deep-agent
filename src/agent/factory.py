@@ -14,7 +14,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 from langmem import create_manage_memory_tool, create_search_memory_tool
 
-from src.agent.backends import build_backend
+from src.agent.backends import SKILLS_ROOT, build_backend
 from src.agent.memory_middleware import (
     MemorySeedMiddleware,
     ProfileHydrationMiddleware,
@@ -91,6 +91,17 @@ def create_spark_agent(
     - ``manage_prefs``/``search_memory`` tools let the agent record & recall
       user preferences (language, tone) directly.
 
+    Skills (Sprint 8, task 8.3):
+    - ``deepagents``' ``SkillsMiddleware`` loads ``SKILL.md`` files from
+      ``/skills/`` (routed by ``build_backend()`` to a ``FilesystemBackend``
+      scoped to the repo's ``skills/`` directory — see
+      ``src/agent/backends.py`` for the security rationale) and injects
+      their name/description into the system prompt. The model reads a
+      skill's full content on demand via ``read_file`` when its
+      description matches the current task (progressive disclosure).
+      ``skills/vocational_advisor/SKILL.md`` is the first skill exposed
+      this way — previously dead content, never loaded by the agent.
+
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
     - Que carreras me convienen -> matching subagent
@@ -149,7 +160,8 @@ def create_spark_agent(
         subagents=subagents,
         system_prompt=SYSTEM_PROMPT,
         name=settings.agent_name,
-        backend=build_backend() if store is not None else None,
+        backend=build_backend(),
+        skills=[SKILLS_ROOT],
         memory=memory_sources,
         checkpointer=checkpointer,
         store=store,
