@@ -586,14 +586,22 @@ async def test_max_turns_actually_stops_the_graph(monkeypatch):
     assert sum(isinstance(m, AIMessage) for m in result["messages"]) <= 3
 ```
 
-**DoD Sprint 5**
-- [ ] 10 bugs B1–B10 cerrados, cada uno con test de regresión.
-- [ ] `make qa && make test` verde. Coverage ≥ 75% líneas (gate nuevo).
-- [ ] `create_spark_agent()` se invoca en al menos 1 test.
-- [ ] Cero mojibake: `rg -n "Ã" src/` devuelve 0.
-- [ ] `SPARK_MODEL_ID` por defecto está en el allowlist IAM.
+**DoD Sprint 5** — cerrado 2026-08-04 (PR #25, #26, #27 a `dev`)
+- [x] 10 bugs B1–B10 cerrados, cada uno con test de regresión.
+- [x] `make qa && make test` verde. Coverage ≥ 75% líneas (gate nuevo) — 79%.
+- [x] `create_spark_agent()` se invoca en al menos 1 test (`tests/agent/factory.py`).
+- [x] Cero mojibake: `rg -n "Ã" src/` devuelve 0.
+- [x] `SPARK_MODEL_ID` por defecto está en el allowlist IAM.
+
+Bug adicional no catalogado, encontrado al escribir el smoke test del grafo
+(PR #25): `AssessmentOnceMiddleware` solo implementaba el hook síncrono
+`wrap_tool_call`. La API real (`ag-ui-langgraph`) invoca el grafo
+exclusivamente vía `astream_events` — sin `awrap_tool_call`, **toda** llamada
+a herramienta en producción habría fallado con `NotImplementedError`. Cerrado
+en el mismo PR que B1.
 
 ---
+
 
 ### Sprint 6 — Memoria persistente (28 h) ⭐ núcleo del pedido
 
