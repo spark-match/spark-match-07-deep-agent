@@ -27,8 +27,9 @@ dependencies = [
     "pydantic-settings>=2.8.0",
     # HTTP client (for tools)
     "httpx>=0.28.0",
-    # Web search: Tavily (primary) + DuckDuckGo (fallback)
-    "tavily-python>=0.5.0",
+    # Web search: Tavily (primary) + DuckDuckGo (fallback). 0.7.26 is the
+    # first version exposing AsyncTavilyClient (Sprint 8, task 8.1).
+    "tavily-python>=0.7.26",
     "duckduckgo-search>=7.0.0",
     # YAML frontmatter for career catalog + prompts
     "pyyaml>=6.0.3",

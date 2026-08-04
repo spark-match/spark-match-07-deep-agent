@@ -8,7 +8,7 @@ from src.tools.web_search.handler import web_search_handler
 
 
 @tool
-def web_search(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+async def web_search(query: str, max_results: int = 5) -> list[dict[str, Any]]:
     """Search the web for current information.
 
     Uses Tavily as primary search (LLM-optimized results) and falls back
@@ -29,7 +29,7 @@ def web_search(query: str, max_results: int = 5) -> list[dict[str, Any]]:
         query: Search query (be specific for better results)
         max_results: Maximum number of results to return (default: 5)
     """
-    result = web_search_handler(query=query, max_results=max_results)
+    result = await web_search_handler(query=query, max_results=max_results)
 
     if result["status"] != "success":
         # Surface status info to the LLM as a single dict.
