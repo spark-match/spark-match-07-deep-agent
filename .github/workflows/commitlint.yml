@@ -19,7 +19,7 @@ jobs:
     name: commitlint
     uses: spark-match/spark-match-01-devops/.github/workflows/reusable-commitlint.yml@main
     with:
-      config-path: '.commitlintrc.json'
+      config-file: '.commitlintrc.json'
       commit-depth: 20
       help-url: 'https://github.com/spark-match/spark-match-08-deep-agent/blob/main/AGENTS.md'
       skip-release-please: true

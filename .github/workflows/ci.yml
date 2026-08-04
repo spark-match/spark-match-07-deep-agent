@@ -11,7 +11,16 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions: {}
+# Union de lo que exigen los reusables de 01-devops: un caller debe
+# concederle al workflow llamado al menos los permisos que este declara,
+# o GitHub rechaza el run al arrancar ("requesting X, but is only
+# allowed none"). python-ci pide pull-requests: write (comentario de
+# coverage) y codeql pide actions: read + security-events: write (SARIF).
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+  security-events: write
 
 jobs:
   python-ci:
