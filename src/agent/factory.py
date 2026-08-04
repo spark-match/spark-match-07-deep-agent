@@ -16,6 +16,7 @@ from langgraph.store.base import BaseStore
 from langmem import create_manage_memory_tool, create_search_memory_tool
 
 from src.agent.backends import SKILLS_ROOT, build_backend
+from src.agent.guardrails import GuardrailsMiddleware
 from src.agent.memory_middleware import (
     MemorySeedMiddleware,
     ProfileHydrationMiddleware,
@@ -154,6 +155,16 @@ def create_spark_agent(
       (production); ignored for ``BaseChatModel`` overrides (test fakes),
       which don't consume it.
 
+    Guardrails (Sprint 9, task 9.A.1):
+    - ``GuardrailsMiddleware`` runs first (``before_model``) on every turn
+      and blocks prompt-injection / jailbreak attempts before the model is
+      ever invoked — no tokens spent on a request that's going to be
+      refused anyway. See ``src/agent/guardrails.py`` for the pattern list
+      and for why this uses ``before_model`` rather than the
+      ``wrap_model_call`` hook the roadmap's wording literally suggests
+      (that combination doesn't exist — ``jump_to`` isn't supported by
+      ``wrap_model_call``, only by ``before_model``/``after_model``).
+
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
     - Que carreras me convienen -> matching subagent
@@ -206,7 +217,7 @@ def create_spark_agent(
     # both the memory-seeded system prompt and our own memory middlewares
     # are opt-in on store being present.
     memory_sources = ["/memories/AGENTS.md"] if store is not None else None
-    middleware: list[Any] = []
+    middleware: list[Any] = [GuardrailsMiddleware()]
     if store is not None:
         middleware.append(MemorySeedMiddleware())
         middleware.append(ProfileHydrationMiddleware())
