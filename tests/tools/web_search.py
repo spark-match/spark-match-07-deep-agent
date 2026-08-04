@@ -175,6 +175,125 @@ class TestWebSearchHandlerProviders:
         assert budget.get_web_search_count() == 0
 
 
+class TestWebSearchHandlerTypedTavilyErrors:
+    """Sprint 8, task 8.2: distinguish 401 (API key) from 429/timeout/network.
+
+    Only the API-key category (401-equivalent: InvalidAPIKeyError /
+    MissingAPIKeyError) must skip the DuckDuckGo fallback — it's our own
+    misconfiguration, not something a different search provider can fix.
+    Every other Tavily failure (429, timeout, network, or anything
+    unclassified) must keep falling back to DuckDuckGo, exactly like
+    before this task.
+    """
+
+    async def test_invalid_api_key_does_not_fall_back_to_duckduckgo(self, monkeypatch):
+        from tavily.errors import InvalidAPIKeyError
+
+        async def raising_tavily(*a):
+            raise InvalidAPIKeyError("invalid key")
+
+        called = {"ddg": False}
+
+        def spy_ddg(*a):
+            called["ddg"] = True
+            return _ok_results()
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", spy_ddg)
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "error"
+        assert called["ddg"] is False
+        assert "API key" in result["errors"][0]
+        assert budget.get_web_search_count() == 0
+
+    async def test_missing_api_key_does_not_fall_back_to_duckduckgo(self, monkeypatch):
+        from tavily.errors import MissingAPIKeyError
+
+        async def raising_tavily(*a):
+            raise MissingAPIKeyError()
+
+        called = {"ddg": False}
+
+        def spy_ddg(*a):
+            called["ddg"] = True
+            return _ok_results()
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", spy_ddg)
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "error"
+        assert called["ddg"] is False
+
+    async def test_rate_limit_falls_back_to_duckduckgo(self, monkeypatch):
+        """429 must still trigger the DuckDuckGo fallback."""
+        from tavily.errors import UsageLimitExceededError
+
+        async def raising_tavily(*a):
+            raise UsageLimitExceededError("rate limited")
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+    async def test_timeout_falls_back_to_duckduckgo(self, monkeypatch):
+        """Tavily's own TimeoutError (wrapping httpx.TimeoutException) must
+        still trigger the DuckDuckGo fallback."""
+        from tavily.errors import TimeoutError as TavilyTimeoutError
+
+        async def raising_tavily(*a):
+            raise TavilyTimeoutError(60)
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+    async def test_network_error_falls_back_to_duckduckgo(self, monkeypatch):
+        """A raw httpx.TransportError (DNS/connection failure, not wrapped
+        by tavily) must still trigger the DuckDuckGo fallback."""
+        import httpx
+
+        async def raising_tavily(*a):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+    async def test_forbidden_error_falls_back_to_duckduckgo(self, monkeypatch):
+        """ForbiddenError (403) isn't explicitly named in the roadmap's
+        401/429/timeout/network list — it falls into the generic catch-all,
+        preserving the pre-8.2 safe default of falling back rather than
+        failing hard on an unclassified category."""
+        from tavily.errors import ForbiddenError
+
+        async def raising_tavily(*a):
+            raise ForbiddenError("forbidden")
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+
 class TestWebSearchHandlerDoesNotBlockEventLoop:
     """Sprint 8, task 8.1 DoD: web_search must not block the event loop.
 

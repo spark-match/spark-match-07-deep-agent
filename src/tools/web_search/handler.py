@@ -10,6 +10,20 @@ Async (Sprint 8, task 8.1): Tavily is queried via ``AsyncTavilyClient``
 thread via ``asyncio.to_thread`` instead — either path keeps the running
 event loop free to serve other requests/tool calls concurrently (closes B7).
 
+Typed Tavily errors (Sprint 8, task 8.2): ``AsyncTavilyClient.search``
+raises a specific exception class per HTTP status
+(``tavily.errors._handle_error_response``: 429 -> UsageLimitExceededError,
+403/432/433 -> ForbiddenError, 401 -> InvalidAPIKeyError, 400 ->
+BadRequestError), and wraps ``httpx.TimeoutException`` into its own
+``TimeoutError``. Network-level failures (DNS, connection refused) are
+*not* wrapped by tavily and surface as raw ``httpx.TransportError``.
+Only ``InvalidAPIKeyError``/``MissingAPIKeyError`` (401 — our own
+misconfiguration) skip the DuckDuckGo fallback: retrying via a different
+provider can't fix an invalid API key, and silently falling back would
+mask a persistent configuration error instead of surfacing it. Every
+other Tavily failure (429, timeout, network, or anything unclassified)
+keeps the previous fallback-to-DuckDuckGo behavior.
+
 Structured return schema:
     {
         "status": "success" | "budget_exhausted" | "error",
@@ -22,8 +36,11 @@ import asyncio
 import logging
 from typing import Any, Literal
 
+import httpx
 from duckduckgo_search import DDGS
 from tavily import AsyncTavilyClient
+from tavily.errors import InvalidAPIKeyError, MissingAPIKeyError
+from tavily.errors import TimeoutError as TavilyTimeoutError
 
 from src import budget
 from src.config import get_settings
@@ -31,6 +48,11 @@ from src.config import get_settings
 logger = logging.getLogger(__name__)
 
 SearchProvider = Literal["tavily", "duckduckgo"]
+
+# 401-equivalent: Tavily itself refused the request because of *our*
+# configuration (missing or invalid API key). Not retryable by falling
+# back to a different search provider — surface it immediately instead.
+_TAVILY_AUTH_ERRORS: tuple[type[Exception], ...] = (InvalidAPIKeyError, MissingAPIKeyError)
 
 
 async def _search_tavily(query: str, max_results: int) -> list[dict[str, Any]]:
@@ -159,8 +181,38 @@ async def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]
                 "data": {"results": results, "provider": "tavily"},
                 "errors": None,
             }
+    except _TAVILY_AUTH_ERRORS as e:
+        # 401-equivalent: our own API key is missing/invalid. Falling back
+        # to DuckDuckGo would silently mask a persistent config problem
+        # instead of surfacing it, so we stop here without trying DDG.
+        logger.error("Tavily rejected the request due to API key configuration: %s", e)
+        return {
+            "status": "error",
+            "data": None,
+            "errors": [
+                "Tavily API key is missing or invalid (check SPARK_TAVILY_API_KEY); "
+                "DuckDuckGo fallback was not attempted since a different search "
+                "provider cannot fix a Tavily configuration error."
+            ],
+        }
+    except (TavilyTimeoutError, httpx.TransportError) as e:
+        # Transient: request timed out or a network-level failure occurred
+        # before Tavily could even respond with a status code. Retryable
+        # via DuckDuckGo.
+        logger.warning(
+            "Tavily request timed out or hit a network error, falling back to DuckDuckGo: %s",
+            e,
+        )
     except Exception as e:
-        logger.warning("Tavily search failed, falling back to DuckDuckGo: %s", e)
+        # Everything else Tavily can raise (rate limit, bad request,
+        # forbidden, or anything unclassified) — keep the previous safe
+        # default of falling back to DuckDuckGo rather than failing hard
+        # on an error category we haven't explicitly reasoned about.
+        logger.warning(
+            "Tavily search failed (%s), falling back to DuckDuckGo: %s",
+            type(e).__name__,
+            e,
+        )
 
     # Fallback to DuckDuckGo. _search_duckduckgo is sync (no async client
     # exists upstream) — run it in a worker thread so it can't block the
