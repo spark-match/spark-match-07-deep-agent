@@ -1,0 +1,15 @@
+# Normalize line endings and encoding for text files, regardless of the
+# committer's local `core.autocrlf` setting. Without this, a Windows
+# checkout with autocrlf=true can commit CRLF-mangled UTF-8, which is how
+# the mojibake in src/tools/*/handler.py (B5, ROADMAP-2026-08.md task 5.5)
+# happened in the first place.
+
+* text=auto working-tree-encoding=UTF-8
+
+*.py text eol=lf working-tree-encoding=UTF-8
+*.md text eol=lf working-tree-encoding=UTF-8
+*.toml text eol=lf working-tree-encoding=UTF-8
+*.json text eol=lf working-tree-encoding=UTF-8
+*.jsonl text eol=lf working-tree-encoding=UTF-8
+*.yml text eol=lf working-tree-encoding=UTF-8
+*.yaml text eol=lf working-tree-encoding=UTF-8

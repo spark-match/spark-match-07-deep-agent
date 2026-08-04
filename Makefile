@@ -27,8 +27,9 @@ export
 export UV_PROJECT_ENVIRONMENT=.venv
 export PYTHONPATH = ./
 
-# QA folders (single source of truth for format/lint)
-QA_FOLDERS := src/ tests/
+# QA folders (single source of truth for format/lint — must match CI's
+# `ruff check .` / `ruff format --check .`, which cover the whole repo)
+QA_FOLDERS := src/ tests/ evals/
 
 # =============================================================================
 # Help
@@ -104,24 +105,24 @@ run-debug: # Run with DEBUG-level logging.
 	SPARK_LOG_LEVEL=DEBUG uv run python -m src
 
 # =============================================================================
-# Evaluation (future — Sprint 4 per IMPROVEMENTS.md)
+# Evaluation
 # =============================================================================
 
 .PHONY: eval-dev
-eval-dev: # Run LLM judge on dev split.
-	@echo "TODO: not implemented yet (see IMPROVEMENTS.md §4.7)"
+eval-dev: # Run evals in mock mode (fast, no AWS credentials needed).
+	uv run python -m evals.runner --mode mock
 
 .PHONY: eval-test
-eval-test: # Run LLM judge on test split.
-	@echo "TODO: not implemented yet (see IMPROVEMENTS.md §4.7)"
+eval-test: # Run evals in live mode (real LangGraph agent; needs AWS creds).
+	uv run python -m evals.runner --mode live
 
 # =============================================================================
 # Setup
 # =============================================================================
 
 .PHONY: install
-install: # Install all dependencies (incl. dev extras) with uv.
-	uv sync --all-extras
+install: # Install all dependencies (incl. dev group) with uv.
+	uv sync --all-groups
 
 .PHONY: clean
 clean: # Remove caches (.pytest_cache, .ruff_cache, .mypy_cache, __pycache__).
