@@ -278,11 +278,37 @@ def _mock_evaluate(case, output: str) -> tuple[bool, str]:
         return False, f"mock FAIL: output missing career {case.expected_career_id}"
 
     if case.expected_no_tool_calls:
-        # In mock mode there's no real LLM to evaluate, so we just check
-        # the output doesn't claim to call specific tools.
+        # Sprint 9, task 9.A.4: hardened mock-mode assertion. The previous
+        # check was "RIASEC" or "@tool" anywhere in the output -- too soft:
+        # a model that called ``evaluate_riasec_profile`` and then rephrased
+        # the result in natural language would slip through (e.g. "Tu perfil
+        # es IRC. Las carreras mas afines son: ...") and the bar would not
+        # fail. The checks below cover the three concrete fingerprints a
+        # vocational tool actually leaves in the output:
+        #
+        # 1. A bare 3-letter RIASEC code (``\b[RIASEC]{3}\b``) -- produced
+        #    only by ``evaluate_riasec_profile_handler`` and
+        #    ``calculate_affinity_handler``.
+        # 2. The assessment handler's interpretation template ("perfil
+        #    dominante es", "indica afinidad con carreras").
+        # 3. The matching handler's affinity-template ("% de afinidad con",
+        #    "Campo:").
+        if _RIASEC_CODE_RE.search(output_upper):
+            return False, "mock FAIL: output contains a RIASEC code (handler fingerprint)"
+        lowered = output.lower()
+        if "perfil dominante es" in lowered or "indica afinidad con carreras" in lowered:
+            return False, (
+                "mock FAIL: output contains assessment-handler template "
+                "(evaluate_riasec_profile was invoked)"
+            )
+        if "% de afinidad con" in lowered or lowered.count("campo:") >= 1:
+            return False, (
+                "mock FAIL: output contains matching-handler template "
+                "(calculate_affinity was invoked)"
+            )
         if "RIASEC" in output_upper or "@tool" in output:
             return False, "mock FAIL: output looks like a tool invocation"
-        return True, "mock PASS: output does not invoke tools"
+        return True, "mock PASS: output does not invoke vocational tools"
 
     return True, "mock PASS: non-empty output"
 
