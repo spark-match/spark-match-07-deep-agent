@@ -191,7 +191,15 @@ def run_eval(mode: str = "mock") -> list[CaseResult]:
                     expected=expected_str,
                     scenario=scenario,
                 )
-                passed = score.value >= 0.5
+                # Sprint 9, task 9.B.2: multi-dimensional judge. The
+                # threshold moved from 0.5 (binary pass/fail) to
+                # ``PASSING_SCORE = 0.7`` (weighted rubric from POC v2).
+                # ``score.passed`` already encodes that, but keep the
+                # explicit comparison so a future threshold tweak is
+                # auditable from this line alone.
+                from evals.judge import PASSING_SCORE
+
+                passed = score.value >= PASSING_SCORE
                 reason = score.reason
             except Exception as exc:
                 passed = False
