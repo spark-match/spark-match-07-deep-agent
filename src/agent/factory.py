@@ -81,6 +81,7 @@ def create_spark_agent(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     store: BaseStore | None = None,
     reflection_executor: Any | None = None,
+    enable_rubric: bool = False,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create and configure the Spark Match Deep Agent.
 
@@ -117,6 +118,15 @@ def create_spark_agent(
             shutdown call (the FastAPI lifespan in production; nothing in
             most tests, hence the ``None`` default). Ignored when ``store``
             is ``None`` — there's nowhere durable to persist into anyway.
+        enable_rubric: When ``True``, wires deepagents' ``RubricMiddleware``
+            (Sprint 9, task 9.B.5) into the stack so callers can supply a
+            ``rubric`` on invocation state to drive self-evaluated
+            iteration against the rubric. Default ``False`` because the
+            middleware is ``.. beta::`` in deepagents 0.6.12 (unstable API)
+            and adds an LLM-call-per-turn cost when activated. See
+            ``docs/rubric-middleware-evaluation.md`` for the full
+            rationale (does NOT substitute the post-loop
+            ``SparkMatchJudge``; only complements it in production).
 
     Architecture:
     - Coordinator (this agent): routes user intent, manages conversation flow.
@@ -246,6 +256,18 @@ def create_spark_agent(
     middleware.append(MaxTurnsMiddleware())
     middleware.append(AssessmentOnceMiddleware())
     middleware.append(PIIRedactionMiddleware())
+    if enable_rubric:
+        # Sprint 9, task 9.B.5. Wired AFTER MaxTurnsMiddleware /
+        # PIIRedactionMiddleware so the grader sub-agent runs with the
+        # token budget already bounded and on redacted (PII-safe)
+        # content. No-op when the caller doesn't supply a ``rubric`` on
+        # invocation state, so production callers that don't use it pay
+        # zero per-turn cost -- only the model instantiation cost
+        # (which is amortized across requests). See
+        # docs/rubric-middleware-evaluation.md SS4-5 for the rationale.
+        from deepagents.middleware import RubricMiddleware
+
+        middleware.append(RubricMiddleware(model=strong_model))
     middleware.append(
         IntentRouterMiddleware(fast_model=fast_model_resolved, strong_model=strong_model)
     )
