@@ -32,6 +32,7 @@ dependencies = [
     "duckduckgo-search>=7.0.0",
     # YAML frontmatter for career catalog + prompts
     "pyyaml>=6.0.3",
+    "langgraph-checkpoint-sqlite>=3.1.1",
 ]
 
 [build-system]
