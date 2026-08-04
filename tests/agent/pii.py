@@ -107,12 +107,19 @@ class TestRedactPiiCombined:
     def test_no_eval_dataset_user_message_triggers_a_false_redaction(self):
         """0 false positives on legitimate vocational-guidance conversation,
         driven off the real dataset rather than a hand-picked list, same
-        discipline as tests/agent/guardrails.py's equivalent test."""
+        discipline as tests/agent/guardrails.py's equivalent test.
+
+        ``expected_status="pii_redacted"`` cases deliberately contain PII
+        (email/phone/DNI) that MUST be redacted by design, so they are
+        exercised by the positive tests above and excluded here.
+        """
         from evals.dataset import load_dataset
 
         cases = load_dataset()
         false_positives = []
         for case in cases:
+            if case.expected_status == "pii_redacted":
+                continue
             for turn in case.turns:
                 if turn.role != "user":
                     continue
