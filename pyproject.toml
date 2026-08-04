@@ -104,6 +104,7 @@ module = [
     "ag_ui_langgraph",
     "ag_ui_langgraph.*",
     "tavily",
+    "tavily.*",
     "langmem",
     "deepagents",
     "deepagents.*",
