@@ -31,6 +31,7 @@ from deepagents.backends import StoreBackend
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import SystemMessage
 
+from src.agent.pii import redact_messages
 from src.agent.user_context import get_user_id
 from src.config import get_settings
 from src.prompts import USER_MEMORY_SEED
@@ -106,6 +107,12 @@ class ProfilePersistMiddleware(AgentMiddleware):
     (needs a real store). Pass ``None`` (e.g. when the graph was built
     without a store, as in most unit tests) to disable it — ``after_agent``
     becomes a no-op.
+
+    Sprint 9, task 9.A.2: messages are redacted via
+    :func:`src.agent.pii.redact_messages` before submission, so the
+    background extraction model never sees a student's raw email, phone,
+    or DNI number, even if the ``StudentProfile`` extraction itself has
+    no reason to persist those fields.
     """
 
     def __init__(self, executor: Any | None = None) -> None:
@@ -126,7 +133,7 @@ class ProfilePersistMiddleware(AgentMiddleware):
         user_id = get_user_id(runtime)
         settings = get_settings()
         self._executor.submit(
-            {"messages": state.get("messages", [])},
+            {"messages": redact_messages(state.get("messages", []))},
             config={"configurable": {"user_id": user_id}},
             after_seconds=settings.reflection_delay_seconds,
         )

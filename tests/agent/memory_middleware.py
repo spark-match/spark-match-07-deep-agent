@@ -1,6 +1,6 @@
 """Tests for the Sprint 6 memory middlewares (hydration, persist, seed)."""
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.store.memory import InMemoryStore
 
 from src.agent.memory_middleware import (
@@ -79,16 +79,41 @@ class TestProfilePersistMiddleware:
     def test_submits_the_conversation_to_the_executor(self):
         executor = _FakeExecutor()
         mw = ProfilePersistMiddleware(executor=executor)
-        state = {"messages": ["fake-message"]}
+        # A real BaseMessage, not a bare string: Sprint 9, task 9.A.2 makes
+        # _submit redact PII via src.agent.pii.redact_messages, which reads
+        # message.content -- a plain string stand-in (this test's original
+        # shape) would raise AttributeError, which is the correct failure
+        # mode for production, not something to paper over here.
+        state = {"messages": [HumanMessage(content="fake-message")]}
 
         result = mw.after_agent(state, _FakeRuntimeNoStore())
 
         assert result is None  # after_agent never mutates state itself
         assert len(executor.calls) == 1
         call = executor.calls[0]
-        assert call["payload"] == {"messages": ["fake-message"]}
+        submitted_messages = call["payload"]["messages"]
+        assert len(submitted_messages) == 1
+        assert submitted_messages[0].content == "fake-message"
         assert call["config"]["configurable"]["user_id"] == DEFAULT_USER_ID
         assert call["after_seconds"] == 30  # settings.reflection_delay_seconds default
+
+    def test_redacts_pii_before_submitting(self):
+        """Sprint 9, task 9.A.2: the executor must never see raw PII."""
+        executor = _FakeExecutor()
+        mw = ProfilePersistMiddleware(executor=executor)
+        state = {
+            "messages": [
+                HumanMessage(content="mi correo es juan@example.com, llámame al 987654321")
+            ]
+        }
+
+        mw.after_agent(state, _FakeRuntimeNoStore())
+
+        submitted = executor.calls[0]["payload"]["messages"][0].content
+        assert "juan@example.com" not in submitted
+        assert "987654321" not in submitted
+        assert "[EMAIL_REDACTED]" in submitted
+        assert "[PHONE_REDACTED]" in submitted
 
     async def test_async_hook_also_submits(self):
         executor = _FakeExecutor()
