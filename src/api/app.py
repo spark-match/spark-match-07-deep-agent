@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from src.agent import create_spark_agent
 from src.budget import reset_session_budget, set_active_session
 from src.config import get_settings
+from src.memory import build_reflection_executor
 from src.observability.langsmith import configure_langsmith
 from src.persistence import build_persistence
 from src.utils import setup_logging
@@ -46,30 +47,42 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # once Sprint 7 wires real user_ids). Built once for the app lifetime so
     # sqlite/postgres connection pools are shared and closed cleanly here.
     async with build_persistence() as persistence:
-        # Create the Deep Agent (compiled LangGraph state graph).
-        graph = create_spark_agent(
-            checkpointer=persistence.checkpointer,
-            store=persistence.store,
+        # Background StudentProfile extraction (langmem ReflectionExecutor,
+        # Sprint 6 tasks 6.D/6.E). Its worker thread is non-daemon, so we own
+        # its shutdown here rather than inside create_spark_agent — see the
+        # docstring on create_spark_agent's reflection_executor param.
+        reflection_executor = (
+            build_reflection_executor(persistence.store) if persistence.store is not None else None
         )
+        try:
+            # Create the Deep Agent (compiled LangGraph state graph).
+            graph = create_spark_agent(
+                checkpointer=persistence.checkpointer,
+                store=persistence.store,
+                reflection_executor=reflection_executor,
+            )
 
-        # Wrap the compiled graph in a LangGraphAgent so AG-UI knows how to
-        # stream events from it (messages, tool calls, reasoning, state
-        # updates, subagent streams).
-        langgraph_agent = LangGraphAgent(
-            name=settings.agent_name,
-            graph=graph,
-            description=(
-                "Spark Match vocational advisor: conversational RIASEC "
-                "assessment, career matching, and personalized action plans."
-            ),
-        )
+            # Wrap the compiled graph in a LangGraphAgent so AG-UI knows how to
+            # stream events from it (messages, tool calls, reasoning, state
+            # updates, subagent streams).
+            langgraph_agent = LangGraphAgent(
+                name=settings.agent_name,
+                graph=graph,
+                description=(
+                    "Spark Match vocational advisor: conversational RIASEC "
+                    "assessment, career matching, and personalized action plans."
+                ),
+            )
 
-        # Store references for health checks / introspection.
-        app.state.graph = graph
-        app.state.langgraph_agent = langgraph_agent
-        app.state.settings = settings
+            # Store references for health checks / introspection.
+            app.state.graph = graph
+            app.state.langgraph_agent = langgraph_agent
+            app.state.settings = settings
 
-        yield
+            yield
+        finally:
+            if reflection_executor is not None:
+                reflection_executor.shutdown(wait=True, cancel_futures=True)
 
     logger.info("Spark Match agent stopped")
 

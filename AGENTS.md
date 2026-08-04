@@ -15,15 +15,15 @@ Es un **Trabajo de Fin de Programa (TFP)** — UNI, II Programa de Especializaci
 1. El evaluador debe poder correr el agente **en local sin cuenta AWS** (`uv sync && uv run python -m src`).
 2. La portabilidad (vendor-neutral) es un criterio de diseño, no un accidente. Ver `../orion/AWS-DEEPAGENT-VS-AWS-RUNTIME-VS-AWS-HARNESS.md` §8.1.
 
-### 1.1 Estado real (verificado 2026-08-03)
+### 1.1 Estado real (verificado 2026-08-04)
 
 El plan de finalización vive en **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** (Sprints 5 → 11). Lo que hay que saber antes de tocar código:
 
 | Capacidad | Estado |
 |---|---|
-| Memoria por sesión y entre sesiones | **No existe.** Sin `checkpointer=`, sin `store=`, sin `backend=`. Sprint 6. |
+| Memoria por sesión y entre sesiones | **Cerrado (Sprint 6).** `checkpointer=`/`store=`/`backend=` cableados en `create_spark_agent()` y en el lifespan de `app.py`. `user_id` sigue siendo un placeholder fijo (`src/agent/user_context.py`) hasta que Sprint 7 provea el real vía JWT — el particionado por usuario existe estructuralmente pero no hay aislamiento real todavía. |
 | Autenticación / autorización | **No existe.** `POST /ag-ui` es público. Sprint 7. |
-| `langmem` | Dependencia fantasma. `create_profile_manager()` no se invoca nunca. |
+| `langmem` | **Activo.** `src/memory/profile_manager.py` usa `create_memory_store_manager` + `ReflectionExecutor`; `src/agent/memory_middleware.py` hidrata/persiste el perfil. |
 | `skills/` | Nunca se carga (`skills=` no se pasa a `create_deep_agent`). |
 | Guardrail de turnos | **Roto.** `MaxTurnsMiddleware` usa `goto`; LangChain 1.x espera `jump_to`. |
 | Modelo por defecto | **Fuera del allowlist IAM** de `spark-match-02-infrastructure`. |
@@ -446,16 +446,22 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 | Sprint | Tema | Estado | Bloquea a |
 |---|---|---|---|
 | **5** | Correcciones críticas (B1–B10) + deuda técnica | ✅ Cerrado 2026-08-04 | 6, 7 |
-| **6** | Memoria persistente: checkpointer + store + langmem | Pendiente | 7, 9 |
+| **6** | Memoria persistente: checkpointer + store + langmem | ✅ Cerrado 2026-08-04 | 7, 9 |
 | **7** | Auth JWT + roles + aislamiento por usuario | Pendiente | 10 |
 | **8** | Tools async, skills, MCP, intent router | Pendiente | 9 |
 | **9** | Guardrails + evals ampliados | Pendiente | 11 |
 | **10** | Contenedor + CI/CD + infraestructura | Pendiente | 11 |
 | **11** | Deploy, observabilidad, cierre TFP | Pendiente | — |
 
-> **Sprint 5 cerrado.** Los 10 bugs B1–B10 tienen test de regresión (PRs #25,
-> #26, #27 a `dev`). Sigue el Sprint 6 (memoria persistente) o el Sprint 7
-> (auth JWT) — ambos desbloqueados.
+> **Sprint 6 cerrado.** Checkpointer + store + composite backend +
+> `MemoryMiddleware` (seed de `/memories/AGENTS.md`) + langmem
+> (`ProfileHydrationMiddleware`/`ProfilePersistMiddleware`) cableados en
+> `create_spark_agent()` y en el lifespan de `app.py` (PRs #31–#33 a `dev`).
+> El particionado por `user_id` existe estructuralmente en todos los
+> namespaces pero usa un placeholder fijo (`src/agent/user_context.py`)
+> hasta que el Sprint 7 provea el real vía JWT — ver AGENTS.md §1.1. Sigue
+> el Sprint 7 (auth JWT), que además reemplaza ese placeholder por el
+> `user_id` real.
 
 `IMPROVEMENTS.md` documenta los Sprints 1–4, ya cerrados. Es histórico: **no lo uses como backlog**.
 
