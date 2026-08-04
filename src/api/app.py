@@ -8,10 +8,20 @@ from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.endpoint import EventEncoder, RunAgentInput
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from src.agent import create_spark_agent
-from src.auth import AuthContext, assert_thread_ownership, derive_thread_id, require_auth
+from src.api.rate_limit import limiter
+from src.api.security_headers import SecurityHeadersMiddleware
+from src.auth import (
+    AuthContext,
+    assert_thread_ownership,
+    check_and_increment_daily_budget,
+    derive_thread_id,
+    require_auth,
+)
 from src.budget import reset_session_budget, set_active_session
 from src.config import get_settings
 from src.memory import build_reflection_executor
@@ -104,7 +114,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS — allow Angular frontend
+    # CORS — allow Angular frontend. Origins are validated at startup
+    # (Settings._validate_cors_origins, task 7.E.1): a wildcard combined
+    # with allow_credentials=True is rejected before the app even starts.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -112,6 +124,23 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Security response headers (task 7.E.2) — added to every response.
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # Rate limiting (task 7.E.3) — per-user_id (falls back to IP) burst
+    # limiter on the costliest endpoint. slowapi raises RateLimitExceeded,
+    # translated to a 429 by the handler below.
+    app.state.limiter = limiter
+
+    async def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
+        # Thin adapter: slowapi's own handler types its second parameter as
+        # RateLimitExceeded specifically, which mypy rejects as narrower
+        # than the Exception FastAPI's add_exception_handler expects.
+        assert isinstance(exc, RateLimitExceeded)
+        return _rate_limit_exceeded_handler(request, exc)
+
+    app.add_exception_handler(RateLimitExceeded, _handle_rate_limit_exceeded)
 
     # Health check — does NOT depend on the agent being constructed
     # (the lifespan runs after the route is registered, so this is safe).
@@ -124,65 +153,10 @@ def create_app() -> FastAPI:
             "model": settings.model_string,
         }
 
-    # AG-UI streaming endpoint. Registered here (not in lifespan) so we can
-    # wire the per-session budget guard: we extract thread_id from the
-    # request body and set it as the active session for tool calls.
-    @app.post(AG_UI_PATH)
-    async def ag_ui_endpoint(
-        input_data: RunAgentInput,
-        request: Request,
-        auth: AuthContext = Depends(require_auth),  # noqa: B008
-    ) -> StreamingResponse:
-        """AG-UI streaming endpoint.
-
-        The frontend (04-frontend) sends messages here and receives an SSE
-        stream of typed events: messages, tool calls, reasoning, state updates.
-
-        Requires a valid JWT (``require_auth``, Sprint 7 task 7.A). The
-        client-supplied ``thread_id`` is untrusted (hard rule #5): it is
-        replaced by a derivation from ``(auth.user_id, thread_id)`` and its
-        ownership is checked/registered before the graph ever runs (task
-        7.B), so one user can never read or continue another user's
-        conversation.
-        """
-        agent: LangGraphAgent = app.state.langgraph_agent
-        accept_header = request.headers.get("accept")
-        encoder = EventEncoder(accept=accept_header)
-
-        thread_id = derive_thread_id(auth.user_id, input_data.thread_id)
-        await assert_thread_ownership(app.state.store, thread_id, auth.user_id)
-        input_data.thread_id = thread_id
-
-        # Activate the session and reset its budget before invoking the agent.
-        # Each request gets its own counters; concurrent requests on different
-        # thread_ids are isolated by the ContextVar in src.budget.
-        set_active_session(thread_id)
-        reset_session_budget(thread_id)
-
-        # Clone the agent so each request gets isolated per-request state,
-        # then attach this request's auth context. ag_ui_langgraph forwards
-        # config["configurable"] into runtime.context on every node/tool
-        # call (base_context.update(config["configurable"])), so
-        # user_id/role/email become available as runtime.context.* and as
-        # the "{user_id}" langmem namespace substitution everywhere.
-        request_agent = agent.clone()
-        request_agent.config = {
-            "configurable": {
-                "thread_id": thread_id,
-                "user_id": auth.user_id,
-                "role": auth.role,
-                "email": auth.email,
-            }
-        }
-
-        async def event_generator() -> AsyncIterator[str]:
-            async for event in request_agent.run(input_data):
-                yield encoder.encode(event)
-
-        return StreamingResponse(
-            event_generator(),
-            media_type=encoder.get_content_type(),
-        )
+    # AG-UI streaming endpoint. Registered via add_api_route against the
+    # module-level ag_ui_endpoint (see its docstring for why it isn't a
+    # closure defined here).
+    app.add_api_route(AG_UI_PATH, ag_ui_endpoint, methods=["POST"])
 
     @app.get(f"{AG_UI_PATH}/health")
     async def ag_ui_health() -> dict[str, str]:
@@ -190,3 +164,81 @@ def create_app() -> FastAPI:
         return {"status": "ok", "agent": settings.agent_name}
 
     return app
+
+
+# Module-level (not a closure inside create_app()) and decorated exactly
+# once at import time. slowapi's @limiter.limit registers this route's
+# limit under a key derived from the function's *qualified name*
+# (f"{func.__module__}.{func.__name__}"), in the module-level `limiter`
+# singleton's process-wide bookkeeping — redefining/redecorating a
+# same-named closure on every create_app() call (as tests do, once per
+# test) would silently accumulate duplicate limit entries for that one
+# name and over-count hits on every subsequent request. Defining it once
+# here and registering it onto each app via add_api_route (instead of
+# @app.post + @limiter.limit inside create_app()) sidesteps that
+# entirely. Uses `request.app.state.*` instead of a closed-over `app`
+# variable for the same reason.
+@limiter.limit(lambda: f"{get_settings().rate_limit_per_minute}/minute")
+async def ag_ui_endpoint(
+    input_data: RunAgentInput,
+    request: Request,
+    auth: AuthContext = Depends(require_auth),  # noqa: B008
+) -> StreamingResponse:
+    """AG-UI streaming endpoint.
+
+    The frontend (04-frontend) sends messages here and receives an SSE
+    stream of typed events: messages, tool calls, reasoning, state updates.
+
+    Requires a valid JWT (``require_auth``, Sprint 7 task 7.A). The
+    client-supplied ``thread_id`` is untrusted (hard rule #5): it is
+    replaced by a derivation from ``(auth.user_id, thread_id)`` and its
+    ownership is checked/registered before the graph ever runs (task
+    7.B), so one user can never read or continue another user's
+    conversation. Also subject to a per-user_id rate limit (task 7.E.3)
+    and daily request budget (task 7.E.4), both enforced before the
+    agent is invoked.
+    """
+    settings = get_settings()
+    agent: LangGraphAgent = request.app.state.langgraph_agent
+    store = request.app.state.store
+    accept_header = request.headers.get("accept")
+    encoder = EventEncoder(accept=accept_header)
+
+    await check_and_increment_daily_budget(
+        store, auth.user_id, settings.budget_max_requests_per_user_per_day
+    )
+
+    thread_id = derive_thread_id(auth.user_id, input_data.thread_id)
+    await assert_thread_ownership(store, thread_id, auth.user_id)
+    input_data.thread_id = thread_id
+
+    # Activate the session and reset its budget before invoking the agent.
+    # Each request gets its own counters; concurrent requests on different
+    # thread_ids are isolated by the ContextVar in src.budget.
+    set_active_session(thread_id)
+    reset_session_budget(thread_id)
+
+    # Clone the agent so each request gets isolated per-request state,
+    # then attach this request's auth context. ag_ui_langgraph forwards
+    # config["configurable"] into runtime.context on every node/tool
+    # call (base_context.update(config["configurable"])), so
+    # user_id/role/email become available as runtime.context.* and as
+    # the "{user_id}" langmem namespace substitution everywhere.
+    request_agent = agent.clone()
+    request_agent.config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "user_id": auth.user_id,
+            "role": auth.role,
+            "email": auth.email,
+        }
+    }
+
+    async def event_generator() -> AsyncIterator[str]:
+        async for event in request_agent.run(input_data):
+            yield encoder.encode(event)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type=encoder.get_content_type(),
+    )

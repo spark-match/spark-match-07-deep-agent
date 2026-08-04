@@ -44,8 +44,14 @@ def _fetch_from_aws() -> bytes:
     return secret_string.encode("utf-8")
 
 
-async def load_jwt_secret() -> bytes:
-    """Return the raw UTF-8 bytes of the JWT signing secret, cached."""
+def load_jwt_secret_sync() -> bytes:
+    """Synchronous core of :func:`load_jwt_secret`.
+
+    Exists so callers that can't ``await`` (e.g. ``slowapi``'s ``key_func``,
+    which is invoked synchronously — see ``src/api/rate_limit.py``) can
+    still resolve the secret. Safe to call from sync code: the AWS path
+    uses ``boto3``, which is sync-only regardless.
+    """
     if cached := _CACHE.get(_CACHE_KEY):
         return cached
 
@@ -59,9 +65,14 @@ async def load_jwt_secret() -> bytes:
     return secret
 
 
+async def load_jwt_secret() -> bytes:
+    """Return the raw UTF-8 bytes of the JWT signing secret, cached."""
+    return load_jwt_secret_sync()
+
+
 def clear_cache() -> None:
     """Clear the cached secret (tests only)."""
     _CACHE.clear()
 
 
-__all__ = ["clear_cache", "load_jwt_secret"]
+__all__ = ["clear_cache", "load_jwt_secret", "load_jwt_secret_sync"]
