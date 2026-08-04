@@ -449,9 +449,21 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 | **6** | Memoria persistente: checkpointer + store + langmem | ✅ Cerrado 2026-08-04 | 7, 9 |
 | **7** | Auth JWT + roles + aislamiento por usuario | ✅ Cerrado 2026-08-04 | 10 |
 | **8** | Tools async, skills, MCP, intent router | ✅ Cerrado 2026-08-04 | 9 |
-| **9** | Guardrails + evals ampliados | Pendiente | 11 |
+| **9** | Guardrails + evals ampliados | ✅ Cerrado 2026-08-04 | 10, 11 |
 | **10** | Contenedor + CI/CD + infraestructura | Pendiente | 11 |
 | **11** | Deploy, observabilidad, cierre TFP | Pendiente | — |
+
+> **Sprint 9 cerrado.** 10 PRs individuales (#43, #44, #45, #46, #47,
+> #48, #49, #50, #51, #52). 352 tests passing, 30/30 evals `--mode
+> mock`, gate completo verde. DoD cumplido: >=30 casos en
+> `evals/dataset.jsonl` con >=5 memoria y >=4 guardrails; judge
+> multi-dimension con umbral 0.7; mock mode detecta regresiones
+> inyectadas; `docs/benchmarks.md` con comparativa Deep Agents vs POC
+> v1/v2; 5 prompts de inyeccion bloqueados con 0 falsos positivos en
+> los 25 casos legitimos. Validacion empirica de la hipotesis
+> RubricMiddleware (subir el JudgeScore) queda pendiente para Sprint 11
+> cuando haya live mode + observabilidad -- ver
+> `docs/rubric-middleware-evaluation.md` SS6.
 
 > **Sprint 6 cerrado.** Checkpointer + store + composite backend +
 > `MemoryMiddleware` (seed de `/memories/AGENTS.md`) + langmem
