@@ -79,6 +79,57 @@ class TestPromptReExports:
         assert load_prompt("planning") == PLANNING_SYSTEM_PROMPT
 
 
+class TestLanguageRule:
+    """Sprint 9, task 9.A.5: an explicit, high-priority LANGUAGE RULE in
+    every prompt the model can be driven by — not just the coordinator's.
+
+    Root cause (measured in the POC v2 Harness, see
+    ``../orion/AWS-HARNESS-POC-V5.md``): subagents get their own
+    independent ``system_prompt`` (confirmed in
+    ``src/agent/subagents/*.py`` — the coordinator's prompt is never
+    concatenated onto a subagent's), so a language rule that only lives
+    in ``coordinator.md`` never reaches a turn handled by ``assessment``,
+    ``matching``, or ``planning``. Each of the 4 prompts must carry its
+    own copy.
+    """
+
+    _MARKER = "LANGUAGE RULE"
+    _NAME_BIAS_GUARD = "Ignora el nombre"
+
+    def test_coordinator_has_language_rule(self):
+        assert self._MARKER in SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in SYSTEM_PROMPT
+
+    def test_assessment_has_language_rule(self):
+        assert self._MARKER in ASSESSMENT_SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in ASSESSMENT_SYSTEM_PROMPT
+
+    def test_matching_has_language_rule(self):
+        assert self._MARKER in MATCHING_SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in MATCHING_SYSTEM_PROMPT
+
+    def test_planning_has_language_rule(self):
+        assert self._MARKER in PLANNING_SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in PLANNING_SYSTEM_PROMPT
+
+    def test_language_rule_is_near_the_top_not_buried(self):
+        """Placement matters: the POC v2 fix moved the rule to the front
+        of each prompt/skill (not left as a low-priority trailing bullet)
+        and that's what measured +46% language match. Assert it appears
+        within roughly the first third of the prompt body, not just
+        "somewhere"."""
+        for name, body in (
+            ("coordinator", SYSTEM_PROMPT),
+            ("assessment", ASSESSMENT_SYSTEM_PROMPT),
+            ("matching", MATCHING_SYSTEM_PROMPT),
+            ("planning", PLANNING_SYSTEM_PROMPT),
+        ):
+            marker_pos = body.index(self._MARKER)
+            assert marker_pos < len(body) / 3, (
+                f"{name}: LANGUAGE RULE is not near the top of the prompt"
+            )
+
+
 class TestParsePromptFile:
     """Edge cases for the frontmatter parser."""
 
