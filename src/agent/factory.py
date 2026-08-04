@@ -9,7 +9,9 @@ from typing import Any, cast
 from deepagents import create_deep_agent
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models.chat_models import BaseChatModel
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.base import BaseStore
 
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.subagents import (
@@ -29,6 +31,8 @@ from src.tools import (
 
 def create_spark_agent(
     model: str | BaseChatModel | None = None,
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
+    store: BaseStore | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Create and configure the Spark Match Deep Agent.
 
@@ -39,6 +43,14 @@ def create_spark_agent(
             or a pre-built ``BaseChatModel`` (e.g. ``GenericFakeChatModel``
             in tests). Defaults to ``settings.model_string`` when omitted,
             so production callers are unaffected.
+        checkpointer: Short-term memory (per-``thread_id`` conversation
+            turns). Built by :func:`src.persistence.build_persistence` in
+            the FastAPI lifespan. ``None`` in tests that don't exercise
+            multi-turn persistence — the graph still compiles and runs a
+            single turn fine without it.
+        store: Long-term memory (profile, preferences, memory files),
+            partitioned per ``user_id`` once Sprint 7 wires real auth.
+            Same ``None``-safe behavior as ``checkpointer``.
 
     Architecture:
     - Coordinator (this agent): routes user intent, manages conversation flow.
@@ -77,6 +89,8 @@ def create_spark_agent(
         subagents=subagents,
         system_prompt=SYSTEM_PROMPT,
         name=settings.agent_name,
+        checkpointer=checkpointer,
+        store=store,
         middleware=[
             MaxTurnsMiddleware(),
             AssessmentOnceMiddleware(),
