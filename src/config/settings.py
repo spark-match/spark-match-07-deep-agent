@@ -29,6 +29,20 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class PersistenceBackend(StrEnum):
+    """Checkpointer/store backend for conversational memory (Sprint 6).
+
+    ``memory`` and ``sqlite`` must work without any AWS credentials (hard
+    rule #7 in AGENTS.md — the TFP evaluator runs this repo locally).
+    ``postgres`` is production-only and requires Secrets Manager DSN
+    resolution (roadmap task 6.A.3), not implemented yet.
+    """
+
+    MEMORY = "memory"
+    SQLITE = "sqlite"
+    POSTGRES = "postgres"
+
+
 class Settings(BaseSettings):
     """Spark Match Agent settings.
 
@@ -82,6 +96,13 @@ class Settings(BaseSettings):
 
     # --- Web Search ---
     tavily_api_key: SecretStr | None = None
+
+    # --- Persistence (Sprint 6) ---
+    # memory/sqlite work fully offline (hard rule #7). postgres is not
+    # implemented yet (needs Secrets Manager DSN resolution, task 6.A.3).
+    persistence_backend: PersistenceBackend = PersistenceBackend.SQLITE
+    sqlite_path: str = ".spark-match/checkpoints.sqlite"
+    postgres_dsn: SecretStr | None = None
 
     @property
     def is_local(self) -> bool:
