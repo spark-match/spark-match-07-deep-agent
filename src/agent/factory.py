@@ -7,6 +7,13 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from deepagents import create_deep_agent
+
+# deepagents.graph has no __all__, and deepagents ships py.typed, so mypy's
+# strict implicit-reexport check flags this as "not explicitly exported"
+# even though resolve_model is genuinely defined there (verified via
+# runtime introspection, not guessed) and is exactly what create_deep_agent
+# itself uses internally to turn a model string into a BaseChatModel.
+from deepagents.graph import resolve_model  # type: ignore[attr-defined]
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -21,6 +28,7 @@ from src.agent.memory_middleware import (
     ProfilePersistMiddleware,
 )
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
+from src.agent.router_middleware import IntentRouterMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
     MATCHING_SUBAGENT,
@@ -45,6 +53,7 @@ PREFS_NAMESPACE = ("spark-match", "{user_id}", "prefs")
 
 def create_spark_agent(
     model: str | BaseChatModel | None = None,
+    fast_model: str | BaseChatModel | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     store: BaseStore | None = None,
     reflection_executor: Any | None = None,
@@ -54,10 +63,18 @@ def create_spark_agent(
     Returns a compiled LangGraph state graph ready for invocation or streaming.
 
     Args:
-        model: Override for the chat model. Accepts a Bedrock model string
-            or a pre-built ``BaseChatModel`` (e.g. ``GenericFakeChatModel``
-            in tests). Defaults to ``settings.model_string`` when omitted,
-            so production callers are unaffected.
+        model: Override for the strong chat model. Accepts a Bedrock model
+            string or a pre-built ``BaseChatModel`` (e.g.
+            ``GenericFakeChatModel`` in tests). Defaults to
+            ``settings.model_string`` when omitted, so production callers
+            are unaffected.
+        fast_model: Override for the fast chat model used by
+            ``IntentRouterMiddleware`` (Sprint 8, task 8.4) for simple
+            turns. Defaults to ``settings.fast_model_string`` when
+            omitted. Tests that only override ``model`` get the *same*
+            instance for both — routing still exercises the middleware,
+            it just never needs to reach a real fast model, since there's
+            only one fake to route to either way.
         checkpointer: Short-term memory (per-``thread_id`` conversation
             turns). Built by :func:`src.persistence.build_persistence` in
             the FastAPI lifespan. ``None`` in tests that don't exercise
@@ -102,6 +119,15 @@ def create_spark_agent(
       ``skills/vocational_advisor/SKILL.md`` is the first skill exposed
       this way — previously dead content, never loaded by the agent.
 
+    Model routing (Sprint 8, task 8.4):
+    - ``IntentRouterMiddleware`` classifies each turn with a pure heuristic
+      (:func:`src.agent.intent.classify_intent`, no extra LLM call) and
+      swaps the model used for that call between ``fast_model`` (Haiku —
+      greetings, chitchat, short assessment replies, low-information
+      clarifications) and ``model`` (Sonnet — everything else, including
+      any turn the heuristic doesn't recognize). See
+      ``src/agent/router_middleware.py``.
+
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
     - Que carreras me convienen -> matching subagent
@@ -109,6 +135,20 @@ def create_spark_agent(
     - General questions -> coordinator handles directly
     """
     settings = get_settings()
+
+    # Resolve both models up front (BaseChatModel, not bare strings): the
+    # router middleware assigns whichever one it picks directly onto
+    # ModelRequest.model, so both must already be real model instances by
+    # the time IntentRouterMiddleware is constructed below.
+    # resolve_model is deepagents' own string->BaseChatModel resolution
+    # (what create_deep_agent uses internally for its own `model=`
+    # argument) — reusing it keeps both models resolved identically.
+    strong_model = resolve_model(model if model is not None else settings.model_string)
+    fast_model_resolved = resolve_model(
+        fast_model
+        if fast_model is not None
+        else (model if model is not None else settings.fast_model_string)
+    )
 
     # SubAgent is a TypedDict; mypy sees plain dict[str, Sequence[object]] from
     # the imported constants, so we cast to satisfy the SubAgent contract.
@@ -144,11 +184,14 @@ def create_spark_agent(
         middleware.append(ProfileHydrationMiddleware())
     middleware.append(MaxTurnsMiddleware())
     middleware.append(AssessmentOnceMiddleware())
+    middleware.append(
+        IntentRouterMiddleware(fast_model=fast_model_resolved, strong_model=strong_model)
+    )
     if store is not None:
         middleware.append(ProfilePersistMiddleware(reflection_executor))
 
     agent = create_deep_agent(
-        model=model if model is not None else settings.model_string,
+        model=strong_model,
         tools=[
             evaluate_riasec_profile,
             search_careers,

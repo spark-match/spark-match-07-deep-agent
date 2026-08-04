@@ -171,6 +171,63 @@ class TestSkillsAreLoadedIntoTheSystemPrompt:
         assert "RIASEC-based career matching" in system_content
 
 
+class TestIntentRouterSelectsTheModelPerTurn:
+    """Sprint 8, task 8.4: stronger end-to-end check than node presence
+    alone (AGENTS.md §5.3). Wires two *different* fake models (fast vs
+    strong) into the same graph and asserts the reply actually came from
+    the one IntentRouterMiddleware should have picked for that turn's
+    heuristic classification — proving ModelRequest.override(model=...)
+    genuinely changes which model answers, not just that a node with the
+    right name exists.
+
+    No node-presence guard here (unlike MaxTurnsMiddleware/SkillsMiddleware
+    above): a middleware that *only* implements wrap_model_call/
+    awrap_model_call — IntentRouterMiddleware's whole surface — wraps the
+    "model" node's invocation rather than registering as its own node.
+    ``agent.get_graph().nodes`` for this stack is
+    ``{__start__, model, tools, TodoListMiddleware.after_model,
+    SkillsMiddleware.before_agent, PatchToolCallsMiddleware.before_agent,
+    MaxTurnsMiddleware.after_model, __end__}`` — confirmed by direct
+    inspection — so asserting on node names would test something that's
+    never true by construction, not a real regression signal.
+    """
+
+    async def test_greeting_turn_is_answered_by_the_fast_model(self):
+        fast = ToolCallingFakeChatModel(messages=iter([AIMessage(content="FAST_MODEL_REPLY")]))
+        strong = ToolCallingFakeChatModel(messages=iter([AIMessage(content="STRONG_MODEL_REPLY")]))
+        agent = create_spark_agent(model=strong, fast_model=fast)
+
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content="Hola")]},
+            config={"configurable": {"thread_id": "router-fast"}},
+        )
+
+        ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
+        assert ai_messages[-1].content == "FAST_MODEL_REPLY"
+
+    async def test_complex_narrative_turn_is_answered_by_the_strong_model(self):
+        fast = ToolCallingFakeChatModel(messages=iter([AIMessage(content="FAST_MODEL_REPLY")]))
+        strong = ToolCallingFakeChatModel(messages=iter([AIMessage(content="STRONG_MODEL_REPLY")]))
+        agent = create_spark_agent(model=strong, fast_model=fast)
+
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            "Resuelvo problemas lógicos mejor que la gente. "
+                            "Quiero ser científico de datos."
+                        )
+                    )
+                ]
+            },
+            config={"configurable": {"thread_id": "router-strong"}},
+        )
+
+        ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
+        assert ai_messages[-1].content == "STRONG_MODEL_REPLY"
+
+
 class TestMaxTurnsActuallyStopsTheGraph:
     """Regression test for B1 — the previous ``goto`` bug never stopped this."""
 
