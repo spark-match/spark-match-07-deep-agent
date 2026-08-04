@@ -93,7 +93,12 @@ class Settings(BaseSettings):
 
     # --- API Server ---
     api_host: str = "0.0.0.0"
-    api_port: int = 8000
+    # Default 8080, not 8000: the frontend service already reserves
+    # localhost:8000 (ROADMAP-2026-08.md SS2.5), so the agent container
+    # must not collide. The Dockerfile exposes 8080 and sets
+    # SPARK_API_PORT=8080 in its ENV. Local dev can still override via
+    # the SPARK_API_PORT env var to keep using 8000 if needed.
+    api_port: int = 8080
     cors_origins: list[str] = ["http://localhost:4200"]  # Angular dev server
 
     # --- Observability ---
