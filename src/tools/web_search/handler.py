@@ -4,6 +4,12 @@ Pure business logic for searching the web. No @tool decorator.
 Uses the budget guard from src.budget to refuse calls that exceed the
 per-session limit.
 
+Async (Sprint 8, task 8.1): Tavily is queried via ``AsyncTavilyClient``
+(native async I/O, no event-loop blocking). DuckDuckGo has no async client
+(``duckduckgo_search`` is sync-only), so its call is offloaded to a worker
+thread via ``asyncio.to_thread`` instead — either path keeps the running
+event loop free to serve other requests/tool calls concurrently (closes B7).
+
 Structured return schema:
     {
         "status": "success" | "budget_exhausted" | "error",
@@ -12,11 +18,12 @@ Structured return schema:
     }
 """
 
+import asyncio
 import logging
 from typing import Any, Literal
 
 from duckduckgo_search import DDGS
-from tavily import TavilyClient
+from tavily import AsyncTavilyClient
 
 from src import budget
 from src.config import get_settings
@@ -26,19 +33,19 @@ logger = logging.getLogger(__name__)
 SearchProvider = Literal["tavily", "duckduckgo"]
 
 
-def _search_tavily(query: str, max_results: int) -> list[dict[str, Any]]:
+async def _search_tavily(query: str, max_results: int) -> list[dict[str, Any]]:
     """Search using Tavily API (LLM-optimized results)."""
     settings = get_settings()
     if not settings.tavily_api_key:
         raise ValueError("TAVILY_API_KEY not configured")
 
-    client = TavilyClient(api_key=settings.tavily_api_key.get_secret_value())
-    response = client.search(
-        query=query,
-        max_results=max_results,
-        search_depth="basic",
-        include_answer=True,
-    )
+    async with AsyncTavilyClient(api_key=settings.tavily_api_key.get_secret_value()) as client:
+        response = await client.search(
+            query=query,
+            max_results=max_results,
+            search_depth="basic",
+            include_answer=True,
+        )
 
     results: list[dict[str, Any]] = []
     for item in response.get("results", []):
@@ -65,7 +72,12 @@ def _search_tavily(query: str, max_results: int) -> list[dict[str, Any]]:
 
 
 def _search_duckduckgo(query: str, max_results: int) -> list[dict[str, Any]]:
-    """Search using DuckDuckGo (free, no API key needed)."""
+    """Search using DuckDuckGo (free, no API key needed).
+
+    Stays a plain sync function — ``duckduckgo_search`` has no async client.
+    Callers must run it via ``asyncio.to_thread`` to avoid blocking the
+    event loop (see ``web_search_handler``).
+    """
     with DDGS() as ddgs:
         raw_results = ddgs.text(query, max_results=max_results)
 
@@ -94,7 +106,7 @@ def _refuse_budget_exceeded() -> dict[str, Any]:
     }
 
 
-def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
+async def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
     """Search the web with budget enforcement.
 
     Pure business logic - no @tool decorator. Testable without LLM.
@@ -103,6 +115,10 @@ def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
     consumed ``settings.max_web_searches_per_session`` web searches, refuse
     the call with ``status="budget_exhausted"`` instead of burning more
     Tavily quota. A cap of ``0`` disables the budget entirely (unlimited).
+
+    Async (Sprint 8, task 8.1): awaits Tavily directly (native async I/O)
+    and offloads DuckDuckGo to a worker thread via ``asyncio.to_thread``,
+    so neither provider blocks the event loop while a request is in flight.
 
     Args:
         query: Search query
@@ -134,7 +150,7 @@ def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
     # otherwise we fall through to DuckDuckGo below and must not charge
     # the session twice for one logical web_search call.
     try:
-        results = _search_tavily(query, max_results)
+        results = await _search_tavily(query, max_results)
         if results:
             budget.increment_web_search()
             logger.info("Web search completed via Tavily: %d results", len(results))
@@ -146,9 +162,11 @@ def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]:
     except Exception as e:
         logger.warning("Tavily search failed, falling back to DuckDuckGo: %s", e)
 
-    # Fallback to DuckDuckGo
+    # Fallback to DuckDuckGo. _search_duckduckgo is sync (no async client
+    # exists upstream) — run it in a worker thread so it can't block the
+    # event loop while other requests/tool calls are in flight.
     try:
-        results = _search_duckduckgo(query, max_results)
+        results = await asyncio.to_thread(_search_duckduckgo, query, max_results)
         budget.increment_web_search()
         logger.info(
             "Web search completed via DuckDuckGo (fallback): %d results",
