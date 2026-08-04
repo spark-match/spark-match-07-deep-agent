@@ -262,10 +262,23 @@ def _mock_evaluate(case, output: str) -> tuple[bool, str]:
 
         if case.expected_careers_count is not None:
             # Matching-type: the code was extracted from explicit user
-            # text, not guessed — exact match is the right bar.
-            if detected_code == expected_upper:
-                return True, f"mock PASS: extracted code {detected_code} matches expected"
-            return False, f"mock FAIL: extracted {detected_code}, expected {expected_upper}"
+            # text, not guessed — exact match is the right bar. Sprint 9,
+            # task 9.B.3: ALSO verify the output carries the expected
+            # number of match entries, so a regression that empties the
+            # match list (e.g. a handler bug returning ``data.matches =
+            # []``) cannot slip past the mock bar.
+            if detected_code != expected_upper:
+                return False, (f"mock FAIL: extracted {detected_code}, expected {expected_upper}")
+            match_count = output.lower().count('"career_id"')
+            if match_count < case.expected_careers_count:
+                return False, (
+                    f"mock FAIL: output carries {match_count} matches, "
+                    f"expected at least {case.expected_careers_count}"
+                )
+            return True, (
+                f"mock PASS: extracted code {detected_code} matches expected "
+                f"and output carries {match_count} matches"
+            )
 
         overlap = set(detected_code) & set(expected_upper)
         if len(overlap) >= 2:
