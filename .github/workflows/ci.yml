@@ -1,77 +1,99 @@
-name: CI
+name: ci
 
 on:
-  push:
-    branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  test:
-    name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.14"]
+# Union de lo que exigen los reusables de 01-devops: un caller debe
+# concederle al workflow llamado al menos los permisos que este declara,
+# o GitHub rechaza el run al arrancar ("requesting X, but is only
+# allowed none"). python-ci pide pull-requests: write (comentario de
+# coverage) y codeql pide actions: read + security-events: write (SARIF).
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+  security-events: write
 
+jobs:
+  python-ci:
+    name: python-ci (ci)
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-python-ci.yml@main
+    with:
+      environment-name: ci
+      working-directory: '.'
+      runs-on: ubuntu-latest
+      python-version: ${{ vars.DEFAULT_PYTHON_VERSION }}
+      ruff-targets: 'src tests evals'
+      mypy-targets: 'src'
+      pytest-targets: 'tests'
+      pytest-args: '--cov=src --cov-report=xml:coverage.xml --cov-fail-under=80'
+      coverage-output: coverage.xml
+      coverage-threshold: '80'
+
+  sonar-python:
+    name: sonar-python (ci)
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-sonar-python.yml@main
+    with:
+      project-key: ${{ vars.SONAR_PROJECT_KEY }}
+      project-name: ${{ vars.SONAR_PROJECT_NAME }}
+      organization: ${{ vars.SONAR_ORGANIZATION }}
+      sources: 'src'
+      tests: 'tests,evals'
+      working-directory: '.'
+      env: 'ci'
+      python-version: ${{ vars.DEFAULT_PYTHON_VERSION }}
+      sync-groups: 'dev'
+      pytest-targets: 'tests'
+      pytest-args: '--cov=src --cov-report=xml:coverage.xml --cov-fail-under=80'
+      coverage-paths: 'coverage.xml'
+      fail-on-quality-gate: 'true'
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  codeql:
+    name: codeql (ci)
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-codeql.yml@main
+    with:
+      languages: 'python,actions'
+      queries-pack: 'security-extended'
+      fail-on-alerts: true
+      fail-on-severity: 'warning'
+
+  gitleaks:
+    name: gitleaks (ci)
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-gitleaks.yml@main
+    with:
+      environment-name: ci
+    secrets:
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  actionlint:
+    name: actionlint (ci)
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-actionlint.yml@main
+    with:
+      environment-name: ci
+
+  yamllint:
+    name: yamllint (ci)
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-yamllint.yml@main
+    with:
+      environment-name: ci
+
+  evals:
+    name: evals (mock mode)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "latest"
-
-      - name: Set up Python
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Cache uv
-        uses: actions/cache@v4
-        with:
-          path: |
-            .venv
-            ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ matrix.python-version }}-${{ hashFiles('**/uv.lock', '**/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-${{ matrix.python-version }}-
-
+      - uses: astral-sh/setup-uv@v6
       - name: Install dependencies
         run: uv sync --all-groups
-
-      - name: Run tests
-        run: uv run pytest --tb=short
-
-      - name: Run eval (mock mode)
+      - name: Run evals (mock mode)
         run: uv run python -m evals.runner --mode mock
-
-      - name: Lint (ruff)
-        run: uv run ruff check .
-
-      - name: Lint (ruff format check)
-        run: uv run ruff format --check .
-
-      - name: Type check (mypy)
-        run: uv run mypy src
-
-  build:
-    name: Build package
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "latest"
-
-      - run: uv python install 3.14
-      - run: uv sync --all-groups
-      - name: Build wheel
-        run: uv build
-      - name: Verify metadata
-        run: uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['name'], tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
