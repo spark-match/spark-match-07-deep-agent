@@ -18,9 +18,14 @@ concurrency:
   group: deploy-${{ github.event.inputs.environment || github.ref_name }}
   cancel-in-progress: false
 
+# El GITHUB_TOKEN del caller es el techo de lo que el reusable puede pedir.
+# `reusable-container-deploy-ecr.yml` declara `pull-requests: write` para su
+# step `notify-deploy-failure`; sin concederlo aca, GitHub rechaza el run
+# entero antes de arrancar (startup_failure, sin jobs ni logs).
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 jobs:
   # Nota: un job que llama un reusable solo admite name/uses/with/secrets/
