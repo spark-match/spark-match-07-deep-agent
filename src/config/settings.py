@@ -15,10 +15,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Environment(StrEnum):
-    """Deployment environment."""
+    """Deployment environment.
+
+    ``dev``/``prod`` son los valores que inyecta la task definition de ECS
+    (``SPARK_ENVIRONMENT`` en modules/agent-service de
+    spark-match-02-infrastructure). Sin ellos el contenedor no arranca:
+    pydantic rechaza el valor y Settings() revienta en el import.
+
+    ``agentcore`` se conserva por compatibilidad con el despliegue anterior.
+    """
 
     LOCAL = "local"
     AGENTCORE = "agentcore"
+    DEV = "dev"
+    PROD = "prod"
 
 
 class LogLevel(StrEnum):
@@ -114,7 +124,14 @@ class Settings(BaseSettings):
     # implemented yet (needs Secrets Manager DSN resolution, task 6.A.3).
     persistence_backend: PersistenceBackend = PersistenceBackend.SQLITE
     sqlite_path: str = ".spark-match/checkpoints.sqlite"
+    # Override local del DSN, analogo a jwt_secret: cuando esta seteado se usa
+    # verbatim y no se toca AWS, asi el perfil postgres se puede probar contra
+    # un Postgres de docker (hard rule #7). Hasta ahora estaba declarado pero
+    # no lo leia nadie.
     postgres_dsn: SecretStr | None = None
+    # Parametro SSM con el ARN del secret de credenciales de RDS. Contrato
+    # ADR-0002, el mismo que lee spark-match-03-backend.
+    db_secret_ssm_param: str = "/spark-match/dev/config/db-secret-arn"
 
     # --- Long-term memory (Sprint 6, tasks 6.D/6.E) ---
     # Delay before the background StudentProfile extraction (langmem
@@ -132,7 +149,9 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr | None = None
     # SSM parameter holding the ARN of the Secrets Manager secret with the
     # actual signing key. Same path spark-match-03-backend reads from.
-    jwt_secret_ssm_param: str = "/spark-match/secret/jwt-arn"
+    # Ruta del contrato ADR-0002. La anterior (/spark-match/secret/jwt-arn) no
+    # existe en ninguna cuenta: el parametro nunca se habria resuelto.
+    jwt_secret_ssm_param: str = "/spark-match/dev/config/jwt-secret-arn"
     # How long the resolved secret is cached in-process before re-fetching.
     jwt_secret_cache_seconds: int = 300
 

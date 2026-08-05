@@ -34,6 +34,11 @@ dependencies = [
     # YAML frontmatter for career catalog + prompts
     "pyyaml>=6.0.3",
     "langgraph-checkpoint-sqlite>=3.1.1",
+    # Perfil `postgres`: checkpointer + store sobre RDS. psycopg trae el
+    # driver y el pool que usa AsyncPostgresSaver.from_conn_string; el extra
+    # [binary] evita compilar libpq en la imagen ARM64 del Dockerfile.
+    "langgraph-checkpoint-postgres>=3.0",
+    "psycopg[binary,pool]>=3.2",
     "pyjwt[crypto]>=2.10",
     "cachetools>=5.5",
     "boto3>=1.40",

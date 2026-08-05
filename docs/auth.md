@@ -30,8 +30,12 @@ La clave de firma se usa como **bytes UTF-8 crudos** — nunca base64-decode ni
    el evaluador del TFP corra y pruebe auth completamente offline (hard rule
    #7).
 2. **SSM → Secrets Manager** (producción): `SPARK_JWT_SECRET_SSM_PARAM`
-   (default `/spark-match/secret/jwt-arn`, el mismo path que lee
+   (default `/spark-match/dev/config/jwt-secret-arn`, el mismo path que lee
    `03-backend`) apunta al ARN del secreto real en Secrets Manager.
+
+   > El default anterior era `/spark-match/secret/jwt-arn`, una ruta que no
+   > existe en ninguna cuenta AWS: el parámetro nunca se habría resuelto. El
+   > contrato real es ADR-0002, `/spark-match/{env}/config/*`.
 
 El resultado se cachea en proceso por `SPARK_JWT_SECRET_CACHE_SECONDS`
 (default 300s).

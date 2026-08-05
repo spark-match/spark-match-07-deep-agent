@@ -3,8 +3,9 @@
 Sprint 6: conversational memory. Selects among 3 profiles via
 ``settings.persistence_backend``. ``memory`` and ``sqlite`` never touch AWS
 (hard rule #7 in AGENTS.md — the TFP evaluator must run this repo locally
-without an AWS account). ``postgres`` is production-only and requires
-Secrets Manager DSN resolution (roadmap task 6.A.3), not implemented yet.
+without an AWS account). ``postgres`` is the production profile: resuelve el
+DSN via SSM -> Secrets Manager (ver :mod:`src.persistence.secrets`) y es el
+unico donde el store de largo plazo tambien sobrevive un restart.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 
 from src.config import PersistenceBackend, get_settings
+from src.persistence.secrets import AGENT_SCHEMA
 
 
 @dataclass(slots=True)
@@ -64,8 +66,36 @@ async def build_persistence() -> AsyncIterator[Persistence]:
         return
 
     # PersistenceBackend.POSTGRES
-    raise NotImplementedError(
-        "El perfil 'postgres' requiere resolver el DSN via Secrets Manager "
-        "(tarea 6.A.3 del ROADMAP-2026-08.md), aun no implementado. Usa "
-        "SPARK_PERSISTENCE_BACKEND=memory o sqlite mientras tanto."
-    )
+    #
+    # Unico perfil donde el store de largo plazo tambien sobrevive un
+    # restart: sqlite solo persiste el checkpointer porque LangGraph no
+    # tiene un BaseStore sobre sqlite.
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from langgraph.store.postgres.aio import AsyncPostgresStore
+
+    from src.persistence.secrets import resolve_postgres_dsn
+
+    dsn = resolve_postgres_dsn()
+
+    async with (
+        AsyncPostgresSaver.from_conn_string(dsn) as saver,
+        AsyncPostgresStore.from_conn_string(dsn) as store,
+    ):
+        # El schema lo crea el agente, no una migracion del backend: el
+        # backend es dueno de `public` y no deberia conocer las tablas de
+        # LangGraph. El DSN ya trae search_path=agent, pero `setup()` corre
+        # DDL y el schema tiene que existir antes.
+        await _ensure_schema(saver)
+        await saver.setup()
+        await store.setup()
+        yield Persistence(checkpointer=saver, store=store)
+
+
+async def _ensure_schema(saver: Any) -> None:
+    """``CREATE SCHEMA IF NOT EXISTS agent`` sobre la conexion del saver.
+
+    Se reutiliza el pool del checkpointer en vez de abrir una conexion
+    aparte: es una sola sentencia idempotente en el arranque.
+    """
+    async with saver.conn.cursor() as cur:
+        await cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{AGENT_SCHEMA}"')
