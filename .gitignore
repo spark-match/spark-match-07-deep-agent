@@ -143,3 +143,13 @@ wandb/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# -----------------------------------------------------------------------------
+# Repos hermanos (clones locales de spark-match-01-devops / 02-infra / 03-backend
+# / 04-frontend usados durante trabajo cross-repo; no se versionan aqui)
+# -----------------------------------------------------------------------------
+spark-match-01-devops/
+spark-match-02-infrastructure/
+spark-match-03-backend/
+spark-match-04-frontend/
+orion/
