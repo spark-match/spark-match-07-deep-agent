@@ -139,9 +139,159 @@ class TestPostgresDsnResolution:
         assert "@db.example.com" in dsn
 
     def test_rejects_a_payload_missing_keys(self):
+        # json.dumps queda fuera del `with`: pytest.raises debe envolver una
+        # sola llamada que pueda lanzar (python:S5778).
+        payload = json.dumps({"host": "h", "port": 5432})
+
         with pytest.raises(ValueError, match="faltan claves"):
-            _dsn_from_secret(json.dumps({"host": "h", "port": 5432}))
+            _dsn_from_secret(payload)
 
     def test_rejects_a_non_json_payload(self):
         with pytest.raises(ValueError, match="no es JSON valido"):
             _dsn_from_secret("not-json{")
+
+
+class TestPostgresDsnFromAws:
+    """El camino de produccion: SSM -> Secrets Manager -> DSN."""
+
+    @staticmethod
+    def _fake_boto3_client(calls: dict):
+        """Devuelve un boto3.client falso que registra lo que se le pidio."""
+
+        class FakeSsm:
+            def get_parameter(self, Name, WithDecryption):
+                calls["ssm_param"] = Name
+                calls["ssm_decrypt"] = WithDecryption
+                return {"Parameter": {"Value": "arn:aws:secretsmanager:us-east-1:1:secret:db-x"}}
+
+        class FakeSecretsManager:
+            def get_secret_value(self, SecretId):
+                calls["secret_id"] = SecretId
+                return {"SecretString": json.dumps(_CREDS)}
+
+        def client(service, region_name):
+            calls.setdefault("regions", []).append(region_name)
+            return FakeSsm() if service == "ssm" else FakeSecretsManager()
+
+        return client
+
+    def test_reads_the_adr_0002_ssm_path_and_then_the_secret(self, monkeypatch):
+        monkeypatch.delenv("SPARK_POSTGRES_DSN", raising=False)
+        monkeypatch.setenv("SPARK_DB_SECRET_SSM_PARAM", "/spark-match/dev/config/db-secret-arn")
+        get_settings.cache_clear()
+        calls: dict = {}
+        monkeypatch.setattr("boto3.client", self._fake_boto3_client(calls))
+
+        dsn = resolve_postgres_dsn()
+
+        assert calls["ssm_param"] == "/spark-match/dev/config/db-secret-arn"
+        # El parametro es un SecureString: sin WithDecryption vuelve el
+        # ciphertext en base64 en vez del ARN.
+        assert calls["ssm_decrypt"] is True
+        # El ARN que sale de SSM es el SecretId que se le pide a Secrets Manager.
+        assert calls["secret_id"] == "arn:aws:secretsmanager:us-east-1:1:secret:db-x"
+        assert "@db.example.com:5432/sparkmatch" in dsn
+        assert "options=-csearch_path%3Dagent" in dsn
+
+
+class TestPostgresProfileWiring:
+    """El perfil postgres, con dobles en lugar de un RDS real."""
+
+    @staticmethod
+    def _install_fakes(monkeypatch, executed: list):
+        """Reemplaza AsyncPostgresSaver/Store por dobles que registran el DDL."""
+        import contextlib
+
+        class FakeCursor:
+            async def execute(self, sql):
+                executed.append(sql)
+
+        class FakeConn:
+            def cursor(self):
+                @contextlib.asynccontextmanager
+                async def _cm():
+                    yield FakeCursor()
+
+                return _cm()
+
+        class FakeSaver:
+            def __init__(self):
+                self.conn = FakeConn()
+                self.setup_called = False
+
+            async def setup(self):
+                self.setup_called = True
+                executed.append("saver.setup")
+
+            @classmethod
+            def from_conn_string(cls, dsn):
+                executed.append(f"saver.from_conn_string:{dsn}")
+
+                @contextlib.asynccontextmanager
+                async def _cm():
+                    yield cls()
+
+                return _cm()
+
+        class FakeStore:
+            async def setup(self):
+                executed.append("store.setup")
+
+            @classmethod
+            def from_conn_string(cls, dsn):
+                @contextlib.asynccontextmanager
+                async def _cm():
+                    yield cls()
+
+                return _cm()
+
+        import langgraph.checkpoint.postgres.aio as saver_mod
+        import langgraph.store.postgres.aio as store_mod
+
+        monkeypatch.setattr(saver_mod, "AsyncPostgresSaver", FakeSaver)
+        monkeypatch.setattr(store_mod, "AsyncPostgresStore", FakeStore)
+
+    async def test_creates_the_agent_schema_before_running_setup(self, monkeypatch):
+        # setup() corre DDL, asi que el schema tiene que existir antes. Si el
+        # orden se invierte, las tablas de LangGraph caen en `public`.
+        monkeypatch.setenv("SPARK_PERSISTENCE_BACKEND", "postgres")
+        monkeypatch.setenv("SPARK_POSTGRES_DSN", "postgresql://u:p@localhost:5432/db")
+        get_settings.cache_clear()
+        executed: list[str] = []
+        self._install_fakes(monkeypatch, executed)
+
+        async with build_persistence() as persistence:
+            assert persistence.checkpointer is not None
+            assert persistence.store is not None
+
+        create = next(i for i, s in enumerate(executed) if "CREATE SCHEMA" in s)
+        setup = executed.index("saver.setup")
+        assert create < setup
+        assert 'CREATE SCHEMA IF NOT EXISTS "agent"' in executed[create]
+
+    async def test_uses_the_resolved_dsn(self, monkeypatch):
+        monkeypatch.setenv("SPARK_PERSISTENCE_BACKEND", "postgres")
+        monkeypatch.setenv("SPARK_POSTGRES_DSN", "postgresql://u:p@localhost:5432/db")
+        get_settings.cache_clear()
+        executed: list[str] = []
+        self._install_fakes(monkeypatch, executed)
+
+        async with build_persistence():
+            pass
+
+        assert "saver.from_conn_string:postgresql://u:p@localhost:5432/db" in executed
+
+    async def test_runs_setup_on_both_saver_and_store(self, monkeypatch):
+        # postgres es el unico perfil donde el store de largo plazo tambien
+        # persiste; si no se llama a su setup(), sus tablas no existen.
+        monkeypatch.setenv("SPARK_PERSISTENCE_BACKEND", "postgres")
+        monkeypatch.setenv("SPARK_POSTGRES_DSN", "postgresql://u:p@localhost:5432/db")
+        get_settings.cache_clear()
+        executed: list[str] = []
+        self._install_fakes(monkeypatch, executed)
+
+        async with build_persistence():
+            pass
+
+        assert "saver.setup" in executed
+        assert "store.setup" in executed
