@@ -108,7 +108,9 @@ wandb/
 .bedrock/
 .bedrock-agentcore/
 
-# Docs not needed in container (README is whitelisted below)
+# Docs not needed in container. README.md NO se lista aca: pyproject.toml lo
+# declara como `readme`, asi que tiene que llegar al contexto de build o el
+# `uv sync` que instala el proyecto falla.
 DEPLOYMENT.md
 RESUMEN_PROYECTO.md
 IMPROVEMENTS.md

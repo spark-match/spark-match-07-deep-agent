@@ -49,6 +49,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
 # Now copy the application source and skills/data.
+#
+# README.md va aca y no en el COPY de manifests de arriba a proposito: el
+# `uv sync` de la linea siguiente instala el proyecto en si, y como
+# pyproject.toml declara `readme = "README.md"`, el build hatchling aborta con
+#   OSError: Readme file does not exist: README.md
+# si el fichero no esta en la imagen. Dejarlo en este grupo evita invalidar la
+# capa (lenta) de dependencias cada vez que se edita el README.
+COPY README.md ./
 COPY src/ ./src/
 COPY skills/ ./skills/
 COPY data/ ./data/
