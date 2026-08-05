@@ -26,6 +26,7 @@ end-to-end 403 would require deliberately bypassing derivation.
 from __future__ import annotations
 
 import itertools
+import json
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -132,6 +133,20 @@ def _ag_ui_body(thread_id: str = "client-thread-1") -> dict:
         "context": [],
         "forwardedProps": {},
     }
+
+
+def _sse_events(raw: str) -> list[dict]:
+    """Parse the ``data:`` lines of an SSE body into AG-UI event dicts.
+
+    Lines that don't start with ``data:`` — the keep-alive comments from
+    src/api/sse.py among them — are dropped exactly as a conforming
+    client would drop them.
+    """
+    return [
+        json.loads(line.removeprefix("data: "))
+        for line in raw.splitlines()
+        if line.startswith("data: ")
+    ]
 
 
 class TestHealthIsPublic:
@@ -250,3 +265,50 @@ class TestAgUiHappyPath:
         assert item is not None
         assert item.value["user_id"] == "real-user-789"
         assert item.value["user_id"] != DEFAULT_USER_ID
+
+
+class TestStreamHygiene:
+    """The stream is the product. Anything that reaches the browser as a
+    TEXT_MESSAGE_* sequence is rendered to a student as the advisor
+    speaking, so internal model calls must not appear there.
+    """
+
+    def test_only_the_real_reply_is_streamed_as_a_message(self, client):
+        """ContentFilterMiddleware calls a model inside the graph on every
+        turn. Its tokens travel the same astream_events channel as the
+        answer, so without an explicit opt-out the safety verdict is
+        emitted as its own complete assistant message before the reply.
+
+        This asserts exactly one message sequence per turn. Reverting the
+        `emit-messages: False` config in src/agent/content_filter.py makes
+        it fail with two.
+        """
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="hygiene-thread"),
+            headers={"Authorization": f"Bearer {_make_token()}"},
+        )
+        assert response.status_code == 200
+
+        types = [event["type"] for event in _sse_events(response.text)]
+
+        assert types.count("TEXT_MESSAGE_START") == 1
+        assert types.count("TEXT_MESSAGE_END") == 1
+
+    def test_stream_still_parses_with_the_keepalive_wrapper_in_place(self, client):
+        """The keep-alive injects raw bytes into the SSE body. If it ever
+        emitted something other than a comment line, every event after it
+        would be corrupted -- so assert the envelope still parses and the
+        run brackets are intact."""
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="keepalive-thread"),
+            headers={"Authorization": f"Bearer {_make_token()}"},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+        types = [event["type"] for event in _sse_events(response.text)]
+
+        assert types[0] == "RUN_STARTED"
+        assert types[-1] == "RUN_FINISHED"
