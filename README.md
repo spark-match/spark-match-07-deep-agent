@@ -120,7 +120,15 @@ El servidor arranca en `http://localhost:8000`.
 | Método | Path | Descripción |
 |--------|------|-------------|
 | `POST` | `/ag-ui` | Endpoint AG-UI (SSE streaming) — el frontend se conecta aquí |
+| `GET` | `/threads` | Conversaciones del usuario autenticado, más reciente primero |
+| `GET` | `/threads/{id}/messages` | Historial de una conversación, para repoblar el chat al recargar |
+| `DELETE` | `/threads/{id}` | Borra la conversación: checkpoints, índice y registro de ownership |
 | `GET` | `/health` | Health check con info del agente y modelo |
+
+Todas las rutas de `/threads` exigen el mismo JWT que `/ag-ui` y derivan el
+`thread_id` efectivo del `user_id` del token antes de verificar ownership:
+el `{id}` de la URL es el identificador **del cliente**, no una capacidad.
+Conocer el id de otro no da acceso a nada.
 
 ## Desarrollo
 
