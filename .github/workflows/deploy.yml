@@ -75,10 +75,16 @@ jobs:
     with:
       environment-name: ${{ github.event.inputs.environment }}
       aws-region: us-east-1
-      ecr-repository: ${{ github.event.inputs.environment == 'production' && vars.ECR_REPOSITORY_PROD || vars.ECR_REPOSITORY_DEV }}
+      ecr-repository: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.ECR_REPOSITORY_PROD
+        || vars.ECR_REPOSITORY_DEV }}
       dockerfile-path: Dockerfile
       platforms: linux/arm64
       image-tags-input: 'latest,__GITHUB_SHA_SHORT__'
       provenance: true
       sbom: true
-      deploy-role-arn: ${{ github.event.inputs.environment == 'production' && vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD || vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
+      deploy-role-arn: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD
+        || vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
