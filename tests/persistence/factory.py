@@ -1,12 +1,15 @@
 """Persistence factory — build_persistence() smoke and behavior tests.
 
 Only exercises the ``memory`` and ``sqlite`` profiles for real: both must
-work fully offline (hard rule #7 in AGENTS.md). ``postgres`` is asserted to
-fail loudly with a clear message instead of silently misbehaving, since it
-needs Secrets Manager DSN resolution (roadmap task 6.A.3) not implemented yet.
+work fully offline (hard rule #7 in AGENTS.md). ``postgres`` necesita un RDS,
+asi que aca solo se verifica el cableado -- que lea el override local del DSN,
+que construya el DSN correcto desde el JSON de Secrets Manager, y que use el
+schema `agent` -- con dobles en lugar de una base real.
 """
 
 from __future__ import annotations
+
+import json
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
@@ -15,6 +18,16 @@ from langgraph.store.memory import InMemoryStore
 
 from src.config import get_settings
 from src.persistence.factory import build_persistence
+from src.persistence.secrets import _dsn_from_secret, resolve_postgres_dsn
+
+#: Shape que escribe modules/rds-postgres en spark-match-02-infrastructure.
+_CREDS = {
+    "host": "db.example.com",
+    "port": 5432,
+    "database": "sparkmatch",
+    "username": "identity",
+    "password": "shh",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -86,13 +99,49 @@ class TestSqliteProfile:
             assert tuple_.checkpoint["channel_values"]["turn"] == 1
 
 
-class TestPostgresProfile:
-    """SPARK_PERSISTENCE_BACKEND=postgres — not implemented yet (task 6.A.3)."""
+class TestPostgresDsnResolution:
+    """resolve_postgres_dsn() — override local vs. camino AWS."""
 
-    async def test_raises_not_implemented_with_a_clear_message(self, monkeypatch):
-        monkeypatch.setenv("SPARK_PERSISTENCE_BACKEND", "postgres")
+    def test_prefers_the_local_override_and_never_touches_aws(self, monkeypatch):
+        monkeypatch.setenv("SPARK_POSTGRES_DSN", "postgresql://u:p@localhost:5432/agent")
         get_settings.cache_clear()
 
-        with pytest.raises(NotImplementedError, match=r"6\.A\.3"):
-            async with build_persistence():
-                pass
+        assert resolve_postgres_dsn() == "postgresql://u:p@localhost:5432/agent"
+
+    def test_builds_the_dsn_from_the_secrets_manager_payload(self, monkeypatch):
+        monkeypatch.delenv("SPARK_POSTGRES_DSN", raising=False)
+        get_settings.cache_clear()
+        monkeypatch.setattr(
+            "src.persistence.secrets._fetch_from_aws",
+            lambda: _dsn_from_secret(json.dumps(_CREDS)),
+        )
+
+        dsn = resolve_postgres_dsn()
+
+        assert dsn.startswith("postgresql://identity:")
+        assert "@db.example.com:5432/sparkmatch" in dsn
+
+    def test_requires_tls_because_rds_pg15_rejects_plaintext(self):
+        assert "sslmode=require" in _dsn_from_secret(json.dumps(_CREDS))
+
+    def test_pins_the_search_path_to_the_agent_schema(self):
+        # Sin esto, las tablas de LangGraph caen en `public`, donde viven las
+        # migraciones del backend. Comparten base; no deben compartir namespace.
+        assert "options=-csearch_path%3Dagent" in _dsn_from_secret(json.dumps(_CREDS))
+
+    def test_percent_encodes_credentials_with_reserved_characters(self):
+        creds = {**_CREDS, "password": "p@ss:w/rd?"}
+
+        dsn = _dsn_from_secret(json.dumps(creds))
+
+        # La contrasena cruda partiria el DSN en el `@` y en el `:`.
+        assert "p%40ss%3Aw%2Frd%3F" in dsn
+        assert "@db.example.com" in dsn
+
+    def test_rejects_a_payload_missing_keys(self):
+        with pytest.raises(ValueError, match="faltan claves"):
+            _dsn_from_secret(json.dumps({"host": "h", "port": 5432}))
+
+    def test_rejects_a_non_json_payload(self):
+        with pytest.raises(ValueError, match="no es JSON valido"):
+            _dsn_from_secret("not-json{")
