@@ -132,5 +132,9 @@ class TestTeardown:
             yield "a"
             raise RuntimeError("agent blew up mid-turn")
 
+        # Built outside the raises block so only one call inside it can
+        # throw, and the assertion can't accidentally pass on the wrong one.
+        source = explodes()
+
         with pytest.raises(RuntimeError, match="blew up"):
-            await _drain(explodes(), 10.0)
+            await _drain(source, 10.0)
