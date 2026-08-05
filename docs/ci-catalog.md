@@ -14,7 +14,7 @@ asegura consistencia con el resto del org.
 | Archivo | Proposito |
 |---|---|
 | `ci.yml` | Lint + typecheck + tests + coverage + evals + sonar + codeql + gitleaks + actionlint + yamllint. Trigger: `push` y `pull_request` a `main`/`dev`, `workflow_dispatch`. |
-| `deploy.yml` | Build + push a ECR via OIDC. Trigger: `push` a `dev` o `main`, `workflow_dispatch` con input `environment`. Jobs separados por env (`dev`/`production`). |
+| `deploy.yml` | Build + push a ECR via OIDC **y rotacion del servicio ECS**. Trigger: `push` a `dev` o `main`, `workflow_dispatch` con input `environment`. Jobs separados por env (`dev`/`production`), cada uno en dos pasos: `deploy-*` (publica la imagen) y `roll-*` (la pone delante del trafico). |
 | `commitlint.yml` | Enforce Conventional Commits sobre PRs y pushes. |
 | `release-please.yml` | Release automation desde `main`. Genera PR con bump + changelog. |
 
@@ -34,20 +34,36 @@ y se pinean a `@main` (ver `docs/VERSIONING.md` en ese repo, linea 5).
 | `reusable-yamllint.yml` | Job `yamllint` (yaml lint) | (sin overrides) |
 | `reusable-commitlint.yml` | Job `commitlint` | `config-path='.commitlintrc.json'`, `commit-depth=20`, `help-url` apuntando al AGENTS.md de este repo |
 | `reusable-release-please.yml` | Job `release-please` | secrets `RELEASE_PLEASE_APP_ID` y `RELEASE_PLEASE_APP_PRIVATE_KEY` org-level |
-| `reusable-container-deploy-ecr.yml` | Jobs `deploy-dev`, `deploy-production`, `deploy-manual` | `platforms='linux/arm64'`, `provenance=true`, `sbom=true`, `deploy-role-arn` desde var env-scoped |
+| `reusable-container-deploy-ecr.yml` | Jobs `deploy-dev`, `deploy-production`, `deploy-manual` | `platforms='linux/arm64'`, `provenance=true`, `sbom=true`, `deploy-role-arn` desde var repo-level |
+| `reusable-ecs-deploy.yml` | Jobs `roll-dev`, `roll-production`, `roll-manual` | `image-uri` desde el output `image-uri` del job de ECR correspondiente (pinneado por digest) |
 
 ## Environments de GitHub
 
-| Nombre | Branch policy | Secrets/Variables scope |
+| Nombre | Branch policy | Gate |
 |---|---|---|
-| `dev` | custom (push a `dev` y manual) | `ECR_REPOSITORY=spark-match-agent-advisor-dev`, `AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN=<rol dev>` |
-| `production` | custom (push a `main` y manual con reviewer) | `ECR_REPOSITORY=spark-match-agent-advisor-production`, `AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN=<rol prod>` |
+| `dev` | custom (push a `dev` y manual) | sin reviewer |
+| `production` | custom (push a `main` y manual) | reviewer humano |
 
-> **Convencion del org** (ver AGENTS.md §1.3 de 02-infrastructure y 03-backend):
-> los nombres son **`dev`** y **`production`** sin sufijo. Las variables
-> **no llevan `_DEV`/`_PROD`** porque el scope ya viene dado por el env
-> de GitHub. Esto evita duplicacion (`ECR_REPOSITORY` vs `ECR_REPOSITORY_DEV`)
-> y mantiene una sola fuente de verdad.
+Los environments siguen llamandose **`dev`** y **`production`** sin sufijo,
+como el resto del org (AGENTS.md §1.3 de 02-infrastructure y 03-backend).
+
+Las **variables**, en cambio, son **repo-level y con sufijo `_DEV`/`_PROD`**:
+
+| Variable | dev | production |
+|---|---|---|
+| `ECR_REPOSITORY_*` | `spark-match-agent-advisor-dev` | `spark-match-agent-advisor-prod` |
+| `ECS_CLUSTER_*` | `spark-match-dev` | `spark-match-prod` |
+| `ECS_SERVICE_*` | `spark-match-agent-dev` | `spark-match-agent-prod` |
+| `ECS_CONTAINER_*` | `agent` | `agent` |
+| `AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_*` | rol dev | rol prod |
+
+> Esto **no** es duplicacion por descuido: una variable con scope de
+> environment **no se resuelve** en el bloque `with:` de una llamada a un
+> reusable, porque el environment se enlaza dentro del workflow *llamado*,
+> no en el caller. Con `vars.ECR_REPOSITORY` env-scoped el input llegaba
+> vacio y el reusable moria en `Input validation failed: ecr-repository:
+> required` (corregido en #58). El mismo patron lo aplica
+> `spark-match-04-frontend`.
 
 ## Pin policy
 
