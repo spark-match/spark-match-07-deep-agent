@@ -47,8 +47,27 @@ from src.agent.message_utils import last_human_message_text
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
+    from langchain_core.runnables import RunnableConfig
 
 logger = logging.getLogger(__name__)
+
+# This classifier runs INSIDE the graph, so its tokens travel the same
+# `astream_events` channel as the assistant's actual reply. ag_ui_langgraph
+# turns every `on_chat_model_stream` event into AG-UI TEXT_MESSAGE_* events
+# unless the run's metadata opts out:
+#
+#     should_emit_messages = (event.get("metadata") or {}).get("emit-messages", True)
+#
+# Without that opt-out the verdict — `{"safe": true, "reason": "..."}` —
+# reaches the browser as a complete START/CONTENT/END message sequence,
+# rendered as if the advisor had answered a student's question about their
+# future with a JSON blob. Two of them per turn, before the real answer.
+#
+# A safety check is machinery, not conversation. It gets no voice.
+_SILENT_CLASSIFIER_CONFIG: RunnableConfig = {
+    "metadata": {"emit-messages": False, "emit-tool-calls": False},
+    "tags": ["internal", "content-filter"],
+}
 
 CANONICAL_UNSAFE_CONTENT_REFUSAL = (
     "No puedo ayudarte con eso. Si estás pasando por una situación difícil, "
@@ -143,7 +162,10 @@ class ContentFilterMiddleware(AgentMiddleware):
         if not text:
             return None
         try:
-            response = self._classifier.invoke(_CONTENT_FILTER_PROMPT.format(message=text))
+            response = self._classifier.invoke(
+                _CONTENT_FILTER_PROMPT.format(message=text),
+                config=_SILENT_CLASSIFIER_CONFIG,
+            )
             safe, reason = _parse_classification(str(response.content))
         except Exception:
             logger.warning("content_filter_error text=%r", text[:200], exc_info=True)
@@ -157,7 +179,10 @@ class ContentFilterMiddleware(AgentMiddleware):
         if not text:
             return None
         try:
-            response = await self._classifier.ainvoke(_CONTENT_FILTER_PROMPT.format(message=text))
+            response = await self._classifier.ainvoke(
+                _CONTENT_FILTER_PROMPT.format(message=text),
+                config=_SILENT_CLASSIFIER_CONFIG,
+            )
             safe, reason = _parse_classification(str(response.content))
         except Exception:
             logger.warning("content_filter_error text=%r", text[:200], exc_info=True)

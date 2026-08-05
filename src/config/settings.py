@@ -169,6 +169,14 @@ class Settings(BaseSettings):
     # agent turn rather than requests across a day.
     budget_max_requests_per_user_per_day: int = 200
 
+    # Seconds of silence on the SSE stream before a keep-alive comment is
+    # emitted (see src/api/sse.py). Sized against the CloudFront
+    # distribution in front of the ALB, whose origin_read_timeout is 60s
+    # and cannot go higher without an AWS quota increase: at 15s a stalled
+    # turn gets three pings before the proxy would have given up. Set to 0
+    # to disable the keep-alive entirely.
+    sse_heartbeat_seconds: float = 15.0
+
     @model_validator(mode="after")
     def _validate_cors_origins(self) -> Settings:
         """Fail fast at startup on an insecure CORS configuration.

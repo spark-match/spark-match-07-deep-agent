@@ -15,6 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from src.agent import create_spark_agent
 from src.api.rate_limit import limiter
 from src.api.security_headers import SecurityHeadersMiddleware
+from src.api.sse import with_heartbeat
 from src.auth import (
     AuthContext,
     assert_thread_ownership,
@@ -248,6 +249,10 @@ async def ag_ui_endpoint(
             yield encoder.encode(event)
 
     return StreamingResponse(
-        event_generator(),
+        # Wrapped so a long silence inside a turn (classifier call, main
+        # model TTFT, a slow tool) doesn't look like a dead connection to
+        # the CloudFront distribution in front of the ALB — see
+        # src/api/sse.py for why 60s is the number that matters.
+        with_heartbeat(event_generator(), settings.sse_heartbeat_seconds),
         media_type=encoder.get_content_type(),
     )

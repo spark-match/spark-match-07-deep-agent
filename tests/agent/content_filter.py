@@ -17,6 +17,28 @@ from src.agent.content_filter import (
 )
 
 
+class _RecordingClassifier:
+    """Records the config of every call, then replays a canned response.
+
+    Deliberately not a GenericFakeChatModel subclass: the middleware's
+    entire contract with its classifier is `.invoke()` / `.ainvoke()`,
+    and a plain object makes the config argument observable without
+    fighting pydantic over an extra attribute.
+    """
+
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.configs = []
+
+    def invoke(self, _prompt, config=None, **_kwargs):
+        self.configs.append(config)
+        return AIMessage(content=self.response)
+
+    async def ainvoke(self, _prompt, config=None, **_kwargs):
+        self.configs.append(config)
+        return AIMessage(content=self.response)
+
+
 def _fake_runtime() -> object:
     return object()
 
@@ -168,3 +190,50 @@ class TestContentFilterMiddlewareAsync:
         result = await mw.abefore_model(state, _fake_runtime())
 
         assert result is None
+
+
+class TestClassifierIsSilentOnTheStream:
+    """The classifier runs inside the graph, so its tokens ride the same
+    astream_events channel as the assistant's reply. ag_ui_langgraph turns
+    every on_chat_model_stream event into AG-UI TEXT_MESSAGE_* events
+    unless the run metadata opts out:
+
+        should_emit_messages = (event.get("metadata") or {}).get("emit-messages", True)
+
+    Without the opt-out, `{"safe": true, "reason": ...}` is streamed to the
+    browser as a complete assistant message before the real answer. These
+    tests pin the opt-out to the exact key the library reads.
+    """
+
+    def test_sync_call_opts_out_of_message_emission(self):
+        classifier = _RecordingClassifier('{"safe": true, "reason": "ok"}')
+        mw = ContentFilterMiddleware(classifier_model=classifier)
+
+        mw.before_model({"messages": [HumanMessage(content="hola")]}, _fake_runtime())
+
+        assert len(classifier.configs) == 1
+        assert classifier.configs[0]["metadata"]["emit-messages"] is False
+
+    async def test_async_call_opts_out_of_message_emission(self):
+        classifier = _RecordingClassifier('{"safe": true, "reason": "ok"}')
+        mw = ContentFilterMiddleware(classifier_model=classifier)
+
+        await mw.abefore_model({"messages": [HumanMessage(content="hola")]}, _fake_runtime())
+
+        assert len(classifier.configs) == 1
+        assert classifier.configs[0]["metadata"]["emit-messages"] is False
+
+    async def test_blocked_turn_also_stays_silent(self):
+        """The unsafe path must not leak the verdict either: the student
+        gets the canonical refusal, never the classifier's reasoning about
+        why their message was flagged."""
+        classifier = _RecordingClassifier('{"safe": false, "reason": "self-harm"}')
+        mw = ContentFilterMiddleware(classifier_model=classifier)
+
+        result = await mw.abefore_model(
+            {"messages": [HumanMessage(content="algo preocupante")]}, _fake_runtime()
+        )
+
+        assert classifier.configs[0]["metadata"]["emit-messages"] is False
+        assert result["messages"][0].content == CANONICAL_UNSAFE_CONTENT_REFUSAL
+        assert "self-harm" not in result["messages"][0].content
