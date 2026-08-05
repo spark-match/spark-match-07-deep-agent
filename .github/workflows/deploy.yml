@@ -31,6 +31,13 @@ jobs:
   # Nota: un job que llama un reusable solo admite name/uses/with/secrets/
   # needs/if/permissions. El gate de GH Environment lo enlaza el propio
   # reusable via inputs.environment-name.
+  #
+  # Las vars van con sufijo _DEV/_PROD y son repo-level, no environment-level:
+  # una var de scope environment NO se resuelve en el `with:` de una llamada a
+  # reusable, porque el environment se enlaza dentro del workflow llamado, no
+  # aca. Con `vars.ECR_REPOSITORY` (environment-level) el input llegaba vacio y
+  # el reusable moria en `Input validation failed: ecr-repository: required`.
+  # spark-match-04-frontend ya documenta y aplica este mismo patron.
   deploy-dev:
     name: deploy (dev)
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -38,13 +45,13 @@ jobs:
     with:
       environment-name: dev
       aws-region: us-east-1
-      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      ecr-repository: ${{ vars.ECR_REPOSITORY_DEV }}
       dockerfile-path: Dockerfile
       platforms: linux/arm64
       image-tags-input: 'latest,__GITHUB_SHA_SHORT__'
       provenance: true
       sbom: true
-      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN }}
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
 
   deploy-production:
     name: deploy (production)
@@ -53,13 +60,13 @@ jobs:
     with:
       environment-name: production
       aws-region: us-east-1
-      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      ecr-repository: ${{ vars.ECR_REPOSITORY_PROD }}
       dockerfile-path: Dockerfile
       platforms: linux/arm64
       image-tags-input: 'latest,__GITHUB_SHA_SHORT__,__GITHUB_REF_NAME__'
       provenance: true
       sbom: true
-      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN }}
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD }}
 
   deploy-manual:
     name: deploy (manual - ${{ github.event.inputs.environment }})
@@ -68,10 +75,10 @@ jobs:
     with:
       environment-name: ${{ github.event.inputs.environment }}
       aws-region: us-east-1
-      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      ecr-repository: ${{ github.event.inputs.environment == 'production' && vars.ECR_REPOSITORY_PROD || vars.ECR_REPOSITORY_DEV }}
       dockerfile-path: Dockerfile
       platforms: linux/arm64
       image-tags-input: 'latest,__GITHUB_SHA_SHORT__'
       provenance: true
       sbom: true
-      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN }}
+      deploy-role-arn: ${{ github.event.inputs.environment == 'production' && vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD || vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
