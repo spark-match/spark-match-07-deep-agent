@@ -103,6 +103,12 @@ def create_app() -> FastAPI:
     """Create the FastAPI application."""
     settings = get_settings()
 
+    # Fuera de local, /docs, /redoc y /openapi.json quedan apagados: publican
+    # el esquema completo de la API sin pedir autenticacion. La listener rule
+    # del ALB tambien los bloquea (modules/agent-service), pero eso protege
+    # solo la ruta por el ALB -- apagarlos aca cubre cualquier otra.
+    docs_enabled = settings.is_local
+
     app = FastAPI(
         title="Spark Match Agent API",
         description=(
@@ -112,6 +118,9 @@ def create_app() -> FastAPI:
         ),
         version="0.1.0",
         lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
 
     # CORS — allow Angular frontend. Origins are validated at startup
