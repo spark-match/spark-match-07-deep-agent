@@ -4,10 +4,11 @@ Three ``AgentMiddleware``s that turn the langmem profile manager and the
 per-user memory-files backend into an actual working long-term memory
 system (Sprint 6, tasks 6.C/6.D/6.E):
 
-- :class:`ProfileHydrationMiddleware` — ``before_agent``: reads the
+- :class:`ProfileHydrationMiddleware` — ``wrap_model_call``: reads the
   previously-extracted ``StudentProfile`` from the store (if any) and
-  injects it as a ``SystemMessage`` so the model doesn't re-ask what it
-  already knows.
+  appends it to the request's **system message** so the model doesn't
+  re-ask what it already knows. Deliberately not a message appended to
+  state — see the class docstring for the Bedrock failure that caused.
 - :class:`ProfilePersistMiddleware` — ``after_agent``: submits the
   conversation to the background reflection executor, which extracts /
   updates the ``StudentProfile`` in the store without blocking the turn.
@@ -66,37 +67,79 @@ def _render_profile_block(profile: dict[str, Any]) -> str:
     )
 
 
+def _render_if_present(items: list[Any]) -> str | None:
+    """Render the first stored profile, or ``None`` when there is nothing yet."""
+    if not items:
+        return None
+    profile = items[0].value
+    if not isinstance(profile, dict) or not profile:
+        return None
+    return _render_profile_block(profile)
+
+
+def _with_extra_system_text(request: Any, block: str | None) -> Any:
+    """Return ``request`` with ``block`` appended to its system message.
+
+    ``ModelRequest`` is frozen, so this goes through ``override``. A
+    ``None`` block returns the request untouched — a student with no
+    extracted profile pays nothing.
+    """
+    if block is None:
+        return request
+
+    existing = request.system_message
+    existing_text = getattr(existing, "content", "") if existing is not None else ""
+    combined = f"{existing_text}\n\n{block}" if existing_text else block
+    return request.override(system_message=SystemMessage(content=combined))
+
+
 class ProfileHydrationMiddleware(AgentMiddleware):
-    """Injects the previously-extracted ``StudentProfile`` into the turn."""
+    """Puts the previously-extracted ``StudentProfile`` in the system prompt.
 
-    async def abefore_agent(
-        self, state: AgentState, runtime: Runtime[Any]
-    ) -> dict[str, Any] | None:
-        return await self._hydrate(runtime)
+    The profile goes into ``ModelRequest.system_message``, not into the
+    message list, and that distinction is the whole point.
 
-    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
+    The original implementation appended a ``SystemMessage`` to state from
+    ``before_agent``. It worked right up until a student actually had a
+    profile, and then every turn died before the model:
+
+        ValueError: Received multiple non-consecutive system messages.
+        During task with name 'model'
+
+    ``langchain_aws``'s Anthropic adapter refuses a message list whose
+    system messages are not contiguous at the front, and appending puts the
+    profile *after* the human turn — behind the agent's own system prompt,
+    with conversation in between. Worse, appending to state means the block
+    is checkpointed, so from the second turn on it also sits in the middle
+    of the persisted history.
+
+    Writing to ``system_message`` is both correct and narrower: nothing is
+    persisted, nothing can end up out of order, and the profile reaches the
+    model as what it always was — instructions, not conversation.
+    """
+
+    async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+        block = await self._profile_block_async(request.runtime)
+        return await handler(_with_extra_system_text(request, block))
+
+    def wrap_model_call(self, request: Any, handler: Any) -> Any:
+        block = self._profile_block_sync(request.runtime)
+        return handler(_with_extra_system_text(request, block))
+
+    def _profile_block_sync(self, runtime: Runtime[Any]) -> str | None:
         store = runtime.store
         if store is None:
             return None
         user_id = get_user_id(runtime)
-        items = store.search(("spark-match", user_id, "profile"), limit=1)
-        return self._build_update(items)
+        return _render_if_present(store.search(("spark-match", user_id, "profile"), limit=1))
 
-    async def _hydrate(self, runtime: Runtime[Any]) -> dict[str, Any] | None:
+    async def _profile_block_async(self, runtime: Runtime[Any]) -> str | None:
         store = runtime.store
         if store is None:
             return None
         user_id = get_user_id(runtime)
         items = await store.asearch(("spark-match", user_id, "profile"), limit=1)
-        return self._build_update(items)
-
-    def _build_update(self, items: list[Any]) -> dict[str, Any] | None:
-        if not items:
-            return None
-        profile = items[0].value
-        if not isinstance(profile, dict) or not profile:
-            return None
-        return {"messages": [SystemMessage(content=_render_profile_block(profile))]}
+        return _render_if_present(items)
 
 
 class ProfilePersistMiddleware(AgentMiddleware):

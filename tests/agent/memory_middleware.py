@@ -1,5 +1,7 @@
 """Tests for the Sprint 6 memory middlewares (hydration, persist, seed)."""
 
+from dataclasses import dataclass, field, replace
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.store.memory import InMemoryStore
 
@@ -32,42 +34,130 @@ class _FakeExecutor:
         self.calls.append({"payload": payload, "config": config, "after_seconds": after_seconds})
 
 
+@dataclass
+class _FakeModelRequest:
+    """Mirrors the slice of ModelRequest the middleware touches.
+
+    ``override`` returning a new instance is the part that matters: the
+    middleware must not mutate the request it was handed.
+    """
+
+    runtime: object
+    system_message: SystemMessage | None = None
+    messages: list = field(default_factory=list)
+
+    def override(self, **overrides):
+        return replace(self, **overrides)
+
+
+def _capturing_handler(seen: list):
+    def handler(request):
+        seen.append(request)
+        return "response"
+
+    return handler
+
+
+def _capturing_ahandler(seen: list):
+    async def handler(request):
+        seen.append(request)
+        return "response"
+
+    return handler
+
+
+def _profile_store(**profile):
+    store = InMemoryStore()
+    store.put(("spark-match", DEFAULT_USER_ID, "profile"), "profile", profile)
+    return store
+
+
 class TestProfileHydrationMiddleware:
-    def test_no_store_is_a_noop(self):
-        mw = ProfileHydrationMiddleware()
-        assert mw.before_agent({"messages": []}, _FakeRuntimeNoStore()) is None
+    """The profile belongs in the system prompt, not in the message list.
 
-    def test_no_profile_yet_is_a_noop(self):
-        mw = ProfileHydrationMiddleware()
-        store = InMemoryStore()
-        result = mw.before_agent({"messages": []}, _FakeRuntimeWithStore(store))
-        assert result is None
+    Appending it as a SystemMessage — the original implementation — worked
+    until a student actually had a profile, and then every turn died before
+    reaching the model with "Received multiple non-consecutive system
+    messages" from langchain_aws's Anthropic adapter. These tests pin the
+    profile to `system_message` and, just as importantly, pin that nothing
+    is added to `messages`.
+    """
 
-    def test_existing_profile_is_injected_as_system_message(self):
-        store = InMemoryStore()
-        store.put(
-            ("spark-match", DEFAULT_USER_ID, "profile"), "profile", {"name": "Juan", "realistic": 8}
+    def test_no_store_leaves_the_request_untouched(self):
+        seen = []
+        request = _FakeModelRequest(runtime=_FakeRuntimeNoStore())
+
+        ProfileHydrationMiddleware().wrap_model_call(request, _capturing_handler(seen))
+
+        assert seen[0] is request
+
+    def test_no_profile_yet_leaves_the_request_untouched(self):
+        seen = []
+        request = _FakeModelRequest(runtime=_FakeRuntimeWithStore(InMemoryStore()))
+
+        ProfileHydrationMiddleware().wrap_model_call(request, _capturing_handler(seen))
+
+        assert seen[0] is request
+
+    def test_profile_goes_into_the_system_message(self):
+        seen = []
+        request = _FakeModelRequest(
+            runtime=_FakeRuntimeWithStore(_profile_store(name="Juan", realistic=8))
         )
 
-        mw = ProfileHydrationMiddleware()
-        result = mw.before_agent({"messages": []}, _FakeRuntimeWithStore(store))
+        ProfileHydrationMiddleware().wrap_model_call(request, _capturing_handler(seen))
 
-        assert result is not None
-        messages = result["messages"]
-        assert len(messages) == 1
-        assert isinstance(messages[0], SystemMessage)
-        assert "Juan" in messages[0].content
-        assert "realistic: 8" in messages[0].content
+        assert "Juan" in seen[0].system_message.content
+        assert "realistic: 8" in seen[0].system_message.content
 
-    async def test_async_hook_reads_the_same_profile(self):
-        store = InMemoryStore()
-        store.put(("spark-match", DEFAULT_USER_ID, "profile"), "profile", {"name": "Ana"})
+    def test_nothing_is_added_to_the_message_list(self):
+        """This is the regression. A system message appended here lands
+        after the human turn, which the Bedrock adapter rejects outright,
+        and gets checkpointed into the persisted history besides."""
+        seen = []
+        request = _FakeModelRequest(
+            runtime=_FakeRuntimeWithStore(_profile_store(name="Juan")),
+            messages=[HumanMessage(content="hola")],
+        )
 
-        mw = ProfileHydrationMiddleware()
-        result = await mw.abefore_agent({"messages": []}, _FakeRuntimeWithStore(store))
+        ProfileHydrationMiddleware().wrap_model_call(request, _capturing_handler(seen))
 
-        assert result is not None
-        assert "Ana" in result["messages"][0].content
+        assert seen[0].messages == [HumanMessage(content="hola")]
+        assert not any(isinstance(m, SystemMessage) for m in seen[0].messages)
+
+    def test_appends_to_an_existing_system_message_instead_of_replacing_it(self):
+        """The agent's own prompt has to survive; the profile is added to it."""
+        seen = []
+        request = _FakeModelRequest(
+            runtime=_FakeRuntimeWithStore(_profile_store(name="Juan")),
+            system_message=SystemMessage(content="Eres el coordinador principal."),
+        )
+
+        ProfileHydrationMiddleware().wrap_model_call(request, _capturing_handler(seen))
+
+        content = seen[0].system_message.content
+        assert "Eres el coordinador principal." in content
+        assert "Juan" in content
+
+    def test_does_not_mutate_the_original_request(self):
+        seen = []
+        request = _FakeModelRequest(runtime=_FakeRuntimeWithStore(_profile_store(name="Juan")))
+
+        ProfileHydrationMiddleware().wrap_model_call(request, _capturing_handler(seen))
+
+        assert request.system_message is None
+        assert seen[0] is not request
+
+    async def test_async_hook_behaves_the_same(self):
+        """Production drives the graph exclusively through astream_events,
+        so the async path is the one that actually runs."""
+        seen = []
+        request = _FakeModelRequest(runtime=_FakeRuntimeWithStore(_profile_store(name="Ana")))
+
+        await ProfileHydrationMiddleware().awrap_model_call(request, _capturing_ahandler(seen))
+
+        assert "Ana" in seen[0].system_message.content
+        assert seen[0].messages == []
 
 
 class TestProfilePersistMiddleware:
