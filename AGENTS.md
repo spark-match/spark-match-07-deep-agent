@@ -342,7 +342,13 @@ Heredada de `spark-match-03-backend/AGENTS.md` §12.2. Antes de escribir cualqui
    - **(c) Receta nueva**: solo si (a) y (b) no aplican.
 4. **Al proponer creación, documentar**: filename `reusable-<kebab>.yml`, inputs con defaults, bloque `permissions:` mínimo, binding de GH Environment si hay secretos, nivel de riesgo y compatibilidad hacia atrás.
 
-> **Estado actual crítico**: `spark-match-01-devops` **borró el CI de Python el 2026-08-02** (commits `7ea5a88` y `c007ce6`). No existen `reusable-python-ci.yml`, `reusable-container-deploy-ecr.yml`, `reusable-sonar-python.yml` ni `reusable-trivy.yml`. Este repo sería el primer consumidor Python del org. Las solicitudes formales R1–R6 están en `ROADMAP-2026-08.md` §6.1. **No dupliques esos pipelines aquí**: se piden upstream.
+> **Estado del catálogo (verificado 2026-08-06)**: los cuatro reusables de Python **existen** y este repo los consume: `reusable-python-ci.yml`, `reusable-container-deploy-ecr.yml`, `reusable-sonar-python.yml` y `reusable-trivy.yml`. Se restauraron el 2026-08-04 tras el borrado del 2026-08-02.
+>
+> Este párrafo decía lo contrario hasta hoy —afirmaba que los cuatro no existían y que había que pedirlos upstream— mucho después de que se entregaran. Un agente que lo leyera no habría cableado nada. De ahí que ahora lleve fecha de verificación.
+>
+> De las seis solicitudes R1–R6 de `ROADMAP-2026-08.md` §6.1, **solo R5 sigue abierta** (poblar `statusChecks` en el manifiesto de governance). R4 quedó parcialmente cerrada: trivy escanea el filesystem, pero escanear la imagen de contenedor sigue sin ser posible.
+>
+> **No dupliques estos pipelines aquí**: se consumen del catálogo.
 
 ### 7.3 Secretos y OIDC
 

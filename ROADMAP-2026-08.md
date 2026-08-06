@@ -193,18 +193,22 @@ Los tags `v0.1.x` existen (release-please) pero **la convención documentada es 
 | `reusable-release-please.yml` | Versionado automático |
 | `reusable-terraform-{plan,apply,destroy}.yml` | (solo para el repo de infra) |
 
-**❌ NO disponibles — fueron BORRADAS el 2026-08-02:**
+**Borradas el 2026-08-02 — estado verificado el 2026-08-06:**
 
-| Workflow borrado | Commit | PR |
-|---|---|---|
-| `python-ci.yml` (uv + ruff + mypy + pytest + coverage) | `7ea5a88` | #203 |
-| `container-deploy-ecr.yml` (buildx + ECR + cosign + SBOM) | `7ea5a88` | #203 |
-| `trivy.yml` | `7ea5a88` | #203 |
-| `checkov.yml` | `7ea5a88` | #203 |
-| `sonar-python.yml` | `c007ce6` | #202 |
-| `.github/actions/run-pytest-with-args/` | `58924b8` | #206 |
+| Workflow borrado | Commit | PR | Hoy |
+|---|---|---|---|
+| `python-ci.yml` (uv + ruff + mypy + pytest + coverage) | `7ea5a88` | #203 | ✅ `reusable-python-ci.yml`, **en uso** |
+| `container-deploy-ecr.yml` (buildx + ECR + cosign + SBOM) | `7ea5a88` | #203 | ✅ `reusable-container-deploy-ecr.yml`, **en uso** |
+| `trivy.yml` | `7ea5a88` | #203 | ✅ `reusable-trivy.yml`, **en uso** |
+| `checkov.yml` | `7ea5a88` | #203 | ❌ no restaurada, y no hace falta (ver abajo) |
+| `sonar-python.yml` | `c007ce6` | #202 | ✅ `reusable-sonar-python.yml`, **en uso** |
+| `.github/actions/run-pytest-with-args/` | `58924b8` | #206 | ✅ restaurada |
 
-**Implicación directa**: este repo **no puede consumir un pipeline de Python del catálogo porque no existe**. La §6.1 solicita recrear tres de ellos.
+**Cinco de las seis volvieron** (restauradas el 2026-08-04, PR #297 de `01-devops`), y este repo consume las cuatro que le hacían falta. Esta sección afirmaba lo contrario durante dos días.
+
+`checkov` es la única que no volvió, y no la necesitamos: `spark-match-02-infrastructure` lo corre localmente con una matriz por módulo (`terraform-security-scan.yml`), algo que el reusable —pensado para escanear un solo path— no podía hacer.
+
+Un aviso que salió de cablear trivy: `reusable-trivy.yml` se restauró con el pin `aquasecurity/trivy-action@0.36.0`, un tag que **no existe** (los de ese repositorio llevan prefijo `v`). Nunca resolvió, y nadie lo notó porque la receta no tenía ni un consumidor en toda la organización. Corregido en `01-devops#321`. Restaurar una receta no equivale a que funcione: hay que ejercitarla.
 
 **Gobernanza**: `spark-match-08-deep-agent` ya está registrado en `governance/repository-governance.json` con `reviewerTeam: ai-devs` y `statusChecks: []` (vacío). Hay que poblarlo.
 
@@ -1323,9 +1327,13 @@ jobs:
 
 ### 6.1 `spark-match-01-devops` — pipelines reutilizables
 
-> **Contexto**: el 2026-08-02 se borraron `python-ci.yml`, `container-deploy-ecr.yml`, `trivy.yml`, `checkov.yml` (commit `7ea5a88`, PR #203) y `sonar-python.yml` (commit `c007ce6`, PR #202). Hoy **ningún repo Python del org puede consumir CI del catálogo**. `spark-match-08-deep-agent` es el primer consumidor Python real.
+> **Contexto (actualizado 2026-08-06)**: el 2026-08-02 se borraron `python-ci.yml`, `container-deploy-ecr.yml`, `trivy.yml`, `checkov.yml` (commit `7ea5a88`, PR #203) y `sonar-python.yml` (commit `c007ce6`, PR #202). El 2026-08-04 se restauraron todas menos `checkov` (PR #297 de `01-devops`).
+>
+> **Estado de las solicitudes: R1, R2, R3 y R6 cerradas; R4 parcialmente; solo R5 sigue abierta.** El texto de abajo se conserva porque documenta lo que se pidió y por qué; la cabecera de cada solicitud dice si sigue viva.
+>
+> `spark-match-08-deep-agent` fue efectivamente el primer consumidor Python real del catálogo, y por serlo destapó que `reusable-trivy.yml` estaba rota desde su restauración (ver R4).
 
-#### Solicitud R1 — `reusable-python-ci.yml` (🔴 bloqueante para Sprint 10)
+#### Solicitud R1 — `reusable-python-ci.yml` — CERRADA (existe y este repo la consume)
 
 Recuperar desde el histórico y modernizar:
 
@@ -1346,13 +1354,13 @@ Cambios exigidos respecto a la versión borrada:
 
 Firma esperada (inputs): `environment-name` (req), `working-directory` (`.`), `commands`, `dependency-groups` (`dev`), `runs-on` (`ubuntu-latest`), `ruff-targets` (`src tests`), `mypy-targets` (`src`), `pytest-targets` (`tests`), `pytest-args`, `coverage-output` (`coverage.xml`), `coverage-threshold`, `permissions-write` (false), `lock-check` (false), `sync-mode` (`full|runtime-only|lint-only`), `frozen` (false), `setup-uv-version` (`latest`), `cache-suffix`, `timeout-minutes` (20), `fail-fast` (false), `python-version`.
 
-#### Solicitud R2 — `reusable-container-deploy-ecr.yml` (🔴 bloqueante para Sprint 10)
+#### Solicitud R2 — `reusable-container-deploy-ecr.yml` — CERRADA (existe y este repo la consume)
 
 Recuperar de `7ea5a88^`. Inputs originales: `environment-name` (req), `aws-region` (`us-east-1`), `ecr-repository` (req), `dockerfile-path` (`Dockerfile`), `context-path` (`.`), `platforms` (`linux/arm64`), `image-tags-input` (`latest,__GITHUB_SHA_SHORT__`), `cache-scope`, `provenance` (true), `sbom` (true), `cosign-sign` (false), `extra-buildx-args`. Secret: `AWS_DEPLOY_ROLE_ARN` (req). Permisos: `id-token: write`, `contents: read`.
 
 Cambio requerido: permitir el ARN también como **input string** (`deploy-role-arn`), igual que hacen `reusable-terraform-plan/apply`, porque GitHub enmascara secrets a `-` cruzando owner y rompe el assume-role.
 
-#### Solicitud R3 — `reusable-sonar-python.yml` (🟡 alta)
+#### Solicitud R3 — `reusable-sonar-python.yml` — CERRADA (existe y este repo la consume)
 
 Recuperar de `c007ce6^`. Simetría con `reusable-sonar-typescript.yml` pero para `coverage.xml` (formato Cobertura) en vez de LCOV, y `sonar.python.version=3.14`.
 
@@ -1364,13 +1372,15 @@ Recuperar de `c007ce6^`. Simetría con `reusable-sonar-typescript.yml` pero para
 
 Para cerrarla del todo hace falta pedir upstream que `reusable-trivy.yml` acepte OIDC + login a ECR, y encadenar el escaneo entre el push a ECR y el `roll` a ECS: así una imagen vulnerable no llega a servir tráfico aunque ya esté publicada.
 
-#### Solicitud R5 — gobernanza (🟡 media)
+#### Solicitud R5 — gobernanza (🟡 media) — ABIERTA, la unica que queda
 
 En `governance/repository-governance.json`, entrada `spark-match-08-deep-agent`: cambiar `statusChecks: []` por los checks reales una vez existan R1–R3. Ejecutar `./scripts/configure-repo-rulesets.sh --apply --repos spark-match-08-deep-agent`.
 
-#### Solicitud R6 — documentación (🟢 baja)
+#### Solicitud R6 — documentación — CERRADA (corregida en 01-devops#320)
 
-`README.md` y `CONTRIBUTING.md` de `01-devops` **siguen describiendo** la capa "python workflows (uv + ruff + mypy + pytest)" que ya no existe, y `reusable-quality.yml` "266 bats + 18 pytest tests". Corregir la deriva o restaurar los workflows.
+Se pidió porque `README.md` y `CONTRIBUTING.md` de `01-devops` describían una capa de workflows de Python que en ese momento no existía, y `reusable-quality.yml` como "266 bats + 18 pytest tests".
+
+Resuelta por las dos vías a la vez: los workflows se restauraron el 2026-08-04, y la deriva de la documentación se corrigió en `01-devops#320`. Verificado el 2026-08-06: la capa python está documentada y existe, y la cuenta de tests ya no aparece desactualizada.
 
 ---
 
