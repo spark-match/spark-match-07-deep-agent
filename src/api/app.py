@@ -16,6 +16,7 @@ from src.agent import create_spark_agent
 from src.api.rate_limit import limiter
 from src.api.security_headers import SecurityHeadersMiddleware
 from src.api.sse import with_heartbeat
+from src.api.threads import router as threads_router
 from src.auth import (
     AuthContext,
     assert_thread_ownership,
@@ -28,6 +29,7 @@ from src.config import get_settings
 from src.memory import build_reflection_executor
 from src.observability.langsmith import configure_langsmith
 from src.persistence import build_persistence
+from src.threads import record_thread_activity
 from src.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             app.state.langgraph_agent = langgraph_agent
             app.state.settings = settings
             app.state.store = persistence.store
+            # Needed by the /threads routes: reading a conversation back
+            # and deleting one both go straight to the checkpointer, which
+            # is the only place the turn-by-turn history lives.
+            app.state.checkpointer = persistence.checkpointer
 
             yield
         finally:
@@ -173,7 +179,29 @@ def create_app() -> FastAPI:
         """Health check at /ag-ui/health (mirrors the workshop convention)."""
         return {"status": "ok", "agent": settings.agent_name}
 
+    # Session management (list / read / delete). Streaming a turn is only
+    # part of a chat product; see src/api/threads.py.
+    app.include_router(threads_router)
+
     return app
+
+
+def _first_user_message_text(input_data: RunAgentInput) -> str | None:
+    """Text of the first user message in the payload, for the thread title.
+
+    The *first* rather than the last: the title is written once, when the
+    conversation is created, and what names a conversation is how it
+    opened. Returns None when the payload carries no readable user text
+    (a resumed tool loop, say), which leaves the entry with its default
+    title for a later turn to fill in.
+    """
+    for message in input_data.messages:
+        if getattr(message, "role", None) != "user":
+            continue
+        content = getattr(message, "content", None)
+        if isinstance(content, str) and content.strip():
+            return content
+    return None
 
 
 # Module-level (not a closure inside create_app()) and decorated exactly
@@ -218,9 +246,21 @@ async def ag_ui_endpoint(
         store, auth.user_id, settings.budget_max_requests_per_user_per_day
     )
 
-    thread_id = derive_thread_id(auth.user_id, input_data.thread_id)
+    client_thread_id = input_data.thread_id
+    thread_id = derive_thread_id(auth.user_id, client_thread_id)
     await assert_thread_ownership(store, thread_id, auth.user_id)
     input_data.thread_id = thread_id
+
+    # Index the conversation so it can be listed later. Runs on every turn,
+    # not just the first: `updated_at` is what orders the sidebar. Done
+    # after the ownership check so a rejected request never writes.
+    await record_thread_activity(
+        store,
+        auth.user_id,
+        thread_id,
+        client_thread_id,
+        title_seed=_first_user_message_text(input_data),
+    )
 
     # Activate the session and reset its budget before invoking the agent.
     # Each request gets its own counters; concurrent requests on different
