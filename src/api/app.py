@@ -4,6 +4,7 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 
+from ag_ui.core.events import EventType
 from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.endpoint import EventEncoder, RunAgentInput
 from fastapi import Depends, FastAPI, Request
@@ -186,6 +187,24 @@ def create_app() -> FastAPI:
     return app
 
 
+def _is_internal_raw_event(event: object, emit_raw_events: bool) -> bool:
+    """Whether this event is a RAW passthrough that must not leave the server.
+
+    ``ag_ui_langgraph`` emits a ``RawEvent`` for *every* LangGraph event,
+    unconditionally — there is no flag upstream to turn it off. Those events
+    carry the verbatim internals: the coordinator's system prompt, the
+    content-safety classifier's prompt, every intermediate state. Measured
+    on a real dev turn, 168 of 297 events and 60% of the stream's bytes.
+
+    That is a disclosure, not just noise. Registration is public, so any
+    student can read exactly what the safety filter checks for — which is
+    most of the work of evading it. The typed AG-UI events (TEXT_MESSAGE_*,
+    STEP_*, STATE_SNAPSHOT, MESSAGES_SNAPSHOT) are the protocol surface the
+    frontend actually consumes; RAW is a debugging convenience.
+    """
+    return not emit_raw_events and getattr(event, "type", None) == EventType.RAW
+
+
 def _first_user_message_text(input_data: RunAgentInput) -> str | None:
     """Text of the first user message in the payload, for the thread title.
 
@@ -286,6 +305,8 @@ async def ag_ui_endpoint(
 
     async def event_generator() -> AsyncIterator[str]:
         async for event in request_agent.run(input_data):
+            if _is_internal_raw_event(event, settings.sse_emit_raw_events):
+                continue
             yield encoder.encode(event)
 
     return StreamingResponse(

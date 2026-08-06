@@ -427,3 +427,57 @@ class TestThreadsApi:
         assert response.status_code == 200
         [thread] = client.get("/threads", headers=headers).json()["threads"]
         assert thread["title"] == "segunda vida"
+
+
+class TestRawEventsAreNotStreamed:
+    """ag_ui_langgraph emits a RawEvent for EVERY LangGraph event, with no
+    upstream flag to turn it off. Those carry the verbatim internals — the
+    coordinator's system prompt, the content-safety classifier's prompt,
+    every intermediate state.
+
+    Measured on a real dev turn before this was filtered: 168 of 297
+    events, 60% of the stream's bytes. Registration is public, so any
+    student could read exactly what the safety filter checks for.
+    """
+
+    def test_raw_events_never_reach_the_client(self, client):
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="raw-thread"),
+            headers={"Authorization": f"Bearer {_make_token(user_id='u-raw-off')}"},
+        )
+
+        types = [event["type"] for event in _sse_events(response.text)]
+
+        # Asserted first on purpose: "RAW not in []" is vacuously true, so
+        # without this the test would pass just as happily on an empty
+        # stream -- which is exactly what a 429 from the shared per-user
+        # rate limiter produces.
+        assert types, "the stream was empty; the assertion below would be vacuous"
+        assert "RAW" not in types
+
+    def test_the_typed_protocol_events_still_flow(self, client):
+        """The filter must not take the actual protocol with it."""
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="typed-thread"),
+            headers={"Authorization": f"Bearer {_make_token(user_id='u-raw-typed')}"},
+        )
+
+        types = {event["type"] for event in _sse_events(response.text)}
+
+        assert {"RUN_STARTED", "RUN_FINISHED", "TEXT_MESSAGE_CONTENT"} <= types
+
+    def test_raw_events_can_be_re_enabled_for_local_debugging(self, client, monkeypatch):
+        monkeypatch.setenv("SPARK_SSE_EMIT_RAW_EVENTS", "true")
+        get_settings.cache_clear()
+
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="raw-on-thread"),
+            headers={"Authorization": f"Bearer {_make_token(user_id='u-raw-on')}"},
+        )
+
+        types = [event["type"] for event in _sse_events(response.text)]
+
+        assert "RAW" in types
