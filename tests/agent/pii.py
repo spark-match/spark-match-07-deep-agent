@@ -5,9 +5,16 @@ integration test (redact-before-submit) — this file covers the pure
 redaction functions and the manage_memory tool-call wrapper in isolation.
 """
 
+import time
+
 from langchain_core.messages import AIMessage, HumanMessage
 
-from src.agent.pii import PIIRedactionMiddleware, redact_messages, redact_pii
+from src.agent.pii import (
+    _EMAIL_RE,
+    PIIRedactionMiddleware,
+    redact_messages,
+    redact_pii,
+)
 
 
 class TestRedactPiiEmail:
@@ -25,6 +32,95 @@ class TestRedactPiiEmail:
     def test_clean_text_is_unchanged(self):
         text = "Me gusta la programación y resolver problemas lógicos."
         assert redact_pii(text) == text
+
+
+class TestEmailRegexComplexity:
+    """El patron de email corre sobre mensajes de chat, o sea entrada no
+    confiable. Antes era cuadratico: "aaa...aaa@aaa...aaa" (letras, un
+    arroba, ningun TLD valido) obligaba al motor a probar cada posicion de
+    inicio y a retroceder por todo el dominio en cada una. 697 ms con
+    n=6400, y doblar n cuadruplicaba el tiempo.
+    """
+
+    # 6.8 s con el patron viejo (extrapolado de 697 ms medidos con n=6400,
+    # crecimiento cuadratico confirmado); ~1.5 ms con el actual. El limite
+    # de 2 s deja un margen de tres ordenes de magnitud sobre el bueno y
+    # falla sin ambiguedad con el malo, asi que no depende de lo rapido
+    # que sea el runner.
+    PATHOLOGICAL_N = 20_000
+    TIME_LIMIT_SECONDS = 2.0
+
+    def test_pathological_input_does_not_blow_up(self):
+        text = "a" * self.PATHOLOGICAL_N + "@" + "a" * self.PATHOLOGICAL_N
+        start = time.perf_counter()
+        result = redact_pii(text)
+        elapsed = time.perf_counter() - start
+        assert elapsed < self.TIME_LIMIT_SECONDS, (
+            f"redact_pii tardo {elapsed:.2f}s con una entrada de "
+            f"{len(text)} caracteres: el patron de email ha vuelto a ser "
+            f"superlineal."
+        )
+        # Y sigue sin ser un email: nada que redactar.
+        assert result == text
+
+    def test_pattern_keeps_both_backtracking_guards(self):
+        """Guarda estructural. El limite de tiempo de arriba avisa cuando
+        alguien rompe la complejidad, pero no dice por que; esto senala la
+        pieza concreta que falta.
+
+        El lookbehind es el que arregla la complejidad. Los posesivos por
+        si solos NO bastan -- medidos, siguen siendo cuadraticos -- pero
+        evitan que el patron se degrade si alguien quita el lookbehind.
+        """
+        pattern = _EMAIL_RE.pattern
+        assert pattern.startswith("(?<![\\w.+-])"), (
+            "falta el lookbehind: sin el, el motor arranca en cada posicion "
+            "dentro de un token y el coste vuelve a ser cuadratico"
+        )
+        assert "++" in pattern, "faltan los cuantificadores posesivos"
+
+    def test_long_legitimate_text_with_many_emails_is_still_correct(self):
+        """La optimizacion no puede costar cobertura: el caso ancho y
+        realista (muchos correos en un texto largo) se sigue redactando
+        entero."""
+        text = " ".join(f"contacto{i}@ejemplo{i}.com" for i in range(500))
+        result = redact_pii(text)
+        assert "@ejemplo" not in result
+        assert result.count("[EMAIL_REDACTED]") == 500
+
+
+class TestRedactPiiEmailEdgeCases:
+    """Casos frontera fijados al cambiar el patron: el comportamiento tiene
+    que ser identico al anterior, no solo mas rapido. Salieron del corpus
+    diferencial (60 367 casos) usado para validar el cambio.
+    """
+
+    def test_email_embedded_in_a_longer_token_redacts_from_the_start(self):
+        result = redact_pii("xxjuan@a.com")
+        assert result == "[EMAIL_REDACTED]"
+
+    def test_tld_of_exactly_two_letters_is_matched(self):
+        assert redact_pii("a@b.co") == "[EMAIL_REDACTED]"
+
+    def test_single_letter_tld_is_not_matched(self):
+        text = "a@b.c"
+        assert redact_pii(text) == text
+
+    def test_domain_without_a_dot_is_not_matched(self):
+        text = "usuario@localhost"
+        assert redact_pii(text) == text
+
+    def test_subdomain_matches_up_to_the_first_tld_like_label(self):
+        """Comportamiento heredado, fijado aqui a proposito: el patron para
+        en la primera etiqueta que parece TLD, asi que 'user@sub.example.com'
+        deja '.com' fuera. No lo cambia este PR -- se documenta para que un
+        cambio futuro sea deliberado y no un descuido."""
+        assert redact_pii("user@sub.example.com") == "[EMAIL_REDACTED].com"
+
+    def test_adjacent_emails_separated_by_punctuation(self):
+        result = redact_pii("correo:ana@a.com,otro:b@b.com")
+        assert result.count("[EMAIL_REDACTED]") == 2
+        assert "@" not in result
 
 
 class TestRedactPiiDni:
