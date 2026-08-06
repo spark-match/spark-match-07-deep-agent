@@ -87,6 +87,44 @@ jobs:
     with:
       environment-name: ci
 
+  # Requiere spark-match-01-devops#321. Cablear esta receta destapo que
+  # apuntaba a `aquasecurity/trivy-action@0.36.0`, un tag que no existe (los de
+  # ese repositorio llevan prefijo `v`), asi que nunca habia resuelto: cero runs
+  # historicos en toda la organizacion. Nadie lo vio porque la receta no tenia
+  # consumidores.
+  #
+  # Cierra parcialmente la solicitud R4 del ROADMAP. Lo que R4 pedia era
+  # escanear la IMAGEN antes del push a ECR; eso hoy no se puede: la receta no
+  # acepta secrets ni hace login a AWS, asi que no puede bajar una imagen de un
+  # ECR privado. Ver ROADMAP-2026-08.md R4 para lo que falta.
+  #
+  # Lo que si cubre este escaneo de filesystem, y no cubria nada antes: CVEs de
+  # las dependencias Python resueltas en uv.lock, y misconfigs del Dockerfile.
+  # Sobre la imagen final quedan sin mirar las CVEs del sistema base.
+  #
+  # scanners sin `secret` a proposito: gitleaks corre en este mismo CI sobre
+  # todo el historial, y el secret scanning nativo de GitHub esta activo. Un
+  # tercer escaner de secretos solo anade hallazgos duplicados.
+  #
+  # ignore-unfixed: true + severity CRITICAL,HIGH => solo rompe el job por algo
+  # que tiene arreglo publicado. Un CVE sin fix no es accionable y bloquear
+  # merges por el solo ensena al equipo a ignorar el check.
+  #
+  # format table y no sarif: el paso `summary` de la receta solo imprime la
+  # configuracion, no los hallazgos, asi que con sarif un job en rojo no diria
+  # por que sin abrir la pestana Security. En tabla sale en el log del propio
+  # job.
+  trivy:
+    name: trivy (ci)
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-trivy.yml@main
+    with:
+      scan-type: fs
+      scan-ref: .
+      scanners: vuln,misconfig
+      severity: CRITICAL,HIGH
+      ignore-unfixed: true
+      format: table
+
   evals:
     name: evals (mock mode)
     runs-on: ubuntu-latest
