@@ -28,14 +28,18 @@
 /src/                                      @spark-match/ai-devs
 /tests/                                    @spark-match/ai-devs
 
+/.commitlintrc.json                        @spark-match/ai-devs
 /.dockerignore                             @spark-match/ai-devs
 /.env.example                              @spark-match/ai-devs
+/.gitattributes                            @spark-match/ai-devs
+/.gitignore                                @spark-match/ai-devs
 /.mcp.json                                 @spark-match/ai-devs
 /.python-version                           @spark-match/ai-devs
+/.release-please-manifest.json             @spark-match/ai-devs
+/.yamllint.yml                             @spark-match/ai-devs
 /CHANGELOG.md                              @spark-match/ai-devs
+/Dockerfile                                @spark-match/ai-devs
 /IMPROVEMENTS.md                           @spark-match/ai-devs
 /Makefile                                  @spark-match/ai-devs
 /pyproject.toml                            @spark-match/ai-devs
 /uv.lock                                   @spark-match/ai-devs
-
-/.gitignore                                @spark-match/ai-devs
