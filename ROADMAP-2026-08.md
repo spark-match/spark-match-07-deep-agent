@@ -1356,9 +1356,13 @@ Cambio requerido: permitir el ARN también como **input string** (`deploy-role-a
 
 Recuperar de `c007ce6^`. Simetría con `reusable-sonar-typescript.yml` pero para `coverage.xml` (formato Cobertura) en vez de LCOV, y `sonar.python.version=3.14`.
 
-#### Solicitud R4 — `reusable-trivy.yml` (🟡 media)
+#### Solicitud R4 — `reusable-trivy.yml` (🟡 media) — parcialmente cerrada
 
-Recuperar de `7ea5a88^`. Escaneo de la imagen de contenedor antes del push a ECR. Sin esto el pipeline de despliegue no tiene gate de vulnerabilidades.
+`reusable-trivy.yml` **ya existe** en el catálogo (se recuperó). Este repo lo consume desde `ci.yml` con `scan-type: fs`, que cubre CVEs de las dependencias Python de `uv.lock` y misconfigs del Dockerfile, con `severity: CRITICAL,HIGH` e `ignore-unfixed: true`.
+
+**Lo que sigue sin cubrirse** es justo lo que pedía la solicitud original: escanear la **imagen** de contenedor. La receta no acepta secrets ni hace login a AWS, así que no puede bajar una imagen de un ECR privado (`scan-type: image` solo sirve para imágenes públicas o ya presentes en el daemon del runner). Sobre la imagen final quedan sin mirar las CVEs del sistema base.
+
+Para cerrarla del todo hace falta pedir upstream que `reusable-trivy.yml` acepte OIDC + login a ECR, y encadenar el escaneo entre el push a ECR y el `roll` a ECS: así una imagen vulnerable no llega a servir tráfico aunque ya esté publicada.
 
 #### Solicitud R5 — gobernanza (🟡 media)
 
