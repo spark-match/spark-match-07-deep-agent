@@ -87,6 +87,12 @@ jobs:
     with:
       environment-name: ci
 
+  # Requiere spark-match-01-devops#321. Cablear esta receta destapo que
+  # apuntaba a `aquasecurity/trivy-action@0.36.0`, un tag que no existe (los de
+  # ese repositorio llevan prefijo `v`), asi que nunca habia resuelto: cero runs
+  # historicos en toda la organizacion. Nadie lo vio porque la receta no tenia
+  # consumidores.
+  #
   # Cierra parcialmente la solicitud R4 del ROADMAP. Lo que R4 pedia era
   # escanear la IMAGEN antes del push a ECR; eso hoy no se puede: la receta no
   # acepta secrets ni hace login a AWS, asi que no puede bajar una imagen de un
