@@ -312,3 +312,118 @@ class TestStreamHygiene:
 
         assert types[0] == "RUN_STARTED"
         assert types[-1] == "RUN_FINISHED"
+
+
+class TestThreadsApi:
+    """Sesiones de chat: listar, releer y borrar.
+
+    El streaming por si solo no es un producto de chat: al recargar la
+    pagina el navegador no tiene con que repoblar la conversacion, la
+    barra lateral no tiene que listar, y una conversacion no se puede
+    borrar. Los datos siempre estuvieron ahi -- el checkpointer guarda cada
+    turno y el store el indice -- lo que faltaba era la puerta.
+    """
+
+    def _post_turn(self, client, thread_id, token, text="hola"):
+        body = _ag_ui_body(thread_id=thread_id)
+        body["messages"] = [{"id": "m1", "role": "user", "content": text}]
+        return client.post("/ag-ui", json=body, headers={"Authorization": f"Bearer {token}"})
+
+    def test_requires_auth(self, client):
+        assert client.get("/threads").status_code == 401
+
+    def test_lists_conversations_after_a_turn(self, client):
+        token = _make_token(user_id="u-list")
+        self._post_turn(client, "chat-1", token, "¿qué carreras van con matemáticas?")
+
+        response = client.get("/threads", headers={"Authorization": f"Bearer {token}"})
+
+        assert response.status_code == 200
+        threads = response.json()["threads"]
+        assert len(threads) == 1
+        assert threads[0]["thread_id"] == "chat-1"
+        assert threads[0]["title"] == "¿qué carreras van con matemáticas?"
+
+    def test_never_exposes_the_derived_thread_id(self, client):
+        """Es la clave del checkpointer; el cliente direcciona por la suya."""
+        token = _make_token(user_id="u-derived")
+        self._post_turn(client, "chat-1", token)
+
+        [thread] = client.get("/threads", headers={"Authorization": f"Bearer {token}"}).json()[
+            "threads"
+        ]
+
+        assert "derived_thread_id" not in thread
+
+    def test_one_user_never_sees_another_users_conversations(self, client):
+        token_a = _make_token(user_id="user-a")
+        token_b = _make_token(user_id="user-b")
+        self._post_turn(client, "chat-a", token_a, "conversacion de A")
+        self._post_turn(client, "chat-b", token_b, "conversacion de B")
+
+        threads_a = client.get("/threads", headers={"Authorization": f"Bearer {token_a}"}).json()[
+            "threads"
+        ]
+
+        assert [t["thread_id"] for t in threads_a] == ["chat-a"]
+
+    def test_rehydrates_the_message_history(self, client):
+        token = _make_token(user_id="u-history")
+        self._post_turn(client, "chat-1", token, "mi pregunta")
+
+        response = client.get(
+            "/threads/chat-1/messages", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 200
+        messages = response.json()["messages"]
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"] == "mi pregunta"
+        assert any(m["role"] == "assistant" for m in messages)
+
+    def test_history_never_includes_system_messages(self, client):
+        """ProfileHydrationMiddleware inyecta el perfil del estudiante como
+        SystemMessage y se persiste en el mismo canal."""
+        token = _make_token(user_id="u-nosys")
+        self._post_turn(client, "chat-1", token)
+
+        messages = client.get(
+            "/threads/chat-1/messages", headers={"Authorization": f"Bearer {token}"}
+        ).json()["messages"]
+
+        assert all(m["role"] in {"user", "assistant"} for m in messages)
+
+    def test_history_of_an_unknown_thread_is_empty(self, client):
+        token = _make_token(user_id="u-unknown")
+
+        response = client.get(
+            "/threads/never-existed/messages", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["messages"] == []
+
+    def test_delete_removes_the_conversation_and_its_history(self, client):
+        token = _make_token(user_id="u-delete")
+        self._post_turn(client, "chat-1", token, "algo que quiero borrar")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        assert client.delete("/threads/chat-1", headers=headers).status_code == 204
+
+        assert client.get("/threads", headers=headers).json()["threads"] == []
+        assert client.get("/threads/chat-1/messages", headers=headers).json()["messages"] == []
+
+    def test_the_same_client_id_is_reusable_after_a_delete(self, client):
+        """El borrado libera tambien el registro de ownership: si no, el id
+        derivado quedaria reclamado para siempre y el estudiante recibiria
+        un 403 sobre su propio hilo."""
+        token = _make_token(user_id="u-reuse")
+        headers = {"Authorization": f"Bearer {token}"}
+        self._post_turn(client, "chat-1", token, "primera vida")
+        client.delete("/threads/chat-1", headers=headers)
+
+        response = self._post_turn(client, "chat-1", token, "segunda vida")
+
+        assert response.status_code == 200
+        [thread] = client.get("/threads", headers=headers).json()["threads"]
+        assert thread["title"] == "segunda vida"
