@@ -177,6 +177,12 @@ class Settings(BaseSettings):
     # to disable the keep-alive entirely.
     sse_heartbeat_seconds: float = 15.0
 
+    # Whether the AG-UI stream forwards ag_ui_langgraph's RAW passthrough
+    # events. Off by default: they carry the verbatim LangGraph internals,
+    # system prompts included, to anyone holding a valid JWT. Turn on
+    # locally to debug the event stream; never in a deployed environment.
+    sse_emit_raw_events: bool = False
+
     @model_validator(mode="after")
     def _validate_cors_origins(self) -> Settings:
         """Fail fast at startup on an insecure CORS configuration.
