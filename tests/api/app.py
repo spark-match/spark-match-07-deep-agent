@@ -481,3 +481,53 @@ class TestRawEventsAreNotStreamed:
         types = [event["type"] for event in _sse_events(response.text)]
 
         assert "RAW" in types
+
+
+class TestProfileDoesNotPolluteTheMessageList:
+    """Regression for a failure that only appeared once memory worked.
+
+    ProfileHydrationMiddleware used to append the student's profile to
+    state as a SystemMessage. Nothing complained until a student actually
+    had an extracted profile, and then every turn died before the model:
+
+        ValueError: Received multiple non-consecutive system messages.
+        During task with name 'model'
+
+    langchain_aws's Anthropic adapter requires system messages to be
+    contiguous at the front, and appending puts the profile behind the
+    human turn. The adapter is not exercisable here (no Bedrock in CI), so
+    this pins the invariant that caused it instead: after a real turn
+    through the real graph, the persisted history holds no SystemMessage.
+    """
+
+    def test_no_system_message_is_persisted_into_the_history(self, client):
+        import anyio
+
+        from src.auth.thread_guard import derive_thread_id
+
+        user_id = "u-profile-pollution"
+        store = client.app.state.store
+        store.put(
+            ("spark-match", user_id, "profile"),
+            "profile",
+            {"name": "Juan", "realistic": 8},
+        )
+
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="profile-thread"),
+            headers={"Authorization": f"Bearer {_make_token(user_id=user_id)}"},
+        )
+        assert response.status_code == 200
+
+        async def read_state():
+            snapshot = await client.app.state.graph.aget_state(
+                {"configurable": {"thread_id": derive_thread_id(user_id, "profile-thread")}}
+            )
+            return (snapshot.values or {}).get("messages") or []
+
+        messages = anyio.run(read_state)
+
+        assert messages, "the turn produced no persisted messages"
+        assert not any(m.type == "system" for m in messages)
+        assert not any("Perfil vocacional" in str(m.content) for m in messages)
