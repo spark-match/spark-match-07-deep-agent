@@ -49,8 +49,9 @@ def _configure_jwt_secret(monkeypatch):
 
 class TestRequireAuthBearerPath:
     async def test_missing_credentials_raises_401(self):
+        request = _bare_request()
         with pytest.raises(HTTPException) as exc_info:
-            await require_auth(_bare_request(), None)
+            await require_auth(request, None)
         assert exc_info.value.status_code == 401
 
     async def test_valid_token_resolves_auth_context(self):
@@ -64,8 +65,9 @@ class TestRequireAuthBearerPath:
         creds = HTTPAuthorizationCredentials(
             scheme="Bearer", credentials=_make_token(secret="not-the-real-secret")
         )
+        request = _bare_request()
         with pytest.raises(HTTPException) as exc_info:
-            await require_auth(_bare_request(), creds)
+            await require_auth(request, creds)
         assert exc_info.value.status_code == 401
 
     async def test_expired_token_raises_401(self):
@@ -74,14 +76,16 @@ class TestRequireAuthBearerPath:
             scheme="Bearer",
             credentials=_make_token(iat=now - timedelta(hours=2), exp=now - timedelta(hours=1)),
         )
+        request = _bare_request()
         with pytest.raises(HTTPException) as exc_info:
-            await require_auth(_bare_request(), creds)
+            await require_auth(request, creds)
         assert exc_info.value.status_code == 401
 
     async def test_non_bearer_scheme_raises_401(self):
         creds = HTTPAuthorizationCredentials(scheme="Basic", credentials="dXNlcjpwYXNz")
+        request = _bare_request()
         with pytest.raises(HTTPException) as exc_info:
-            await require_auth(_bare_request(), creds)
+            await require_auth(request, creds)
         assert exc_info.value.status_code == 401
 
     async def test_unrecognized_role_falls_back_to_default(self):
@@ -105,6 +109,7 @@ class TestRequireAuthLambdaAuthorizerPath:
 
     async def test_missing_sub_in_authorizer_context_raises_401(self):
         aws_event = {"requestContext": {"authorizer": {"lambda": {"role": "admin"}}}}
+        request = _bare_request(aws_event)
         with pytest.raises(HTTPException) as exc_info:
-            await require_auth(_bare_request(aws_event), None)
+            await require_auth(request, None)
         assert exc_info.value.status_code == 401

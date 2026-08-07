@@ -150,7 +150,13 @@ def create_app() -> FastAPI:
     # translated to a 429 by the handler below.
     app.state.limiter = limiter
 
-    async def _handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
+    # `async` sin `await` a proposito. Starlette envuelve los handlers
+    # sincronos en `run_in_threadpool`; esta funcion solo construye una
+    # respuesta y no bloquea nada, asi que declararla async le ahorra el salto
+    # de hilo. Quitarle el `async` seria mas lento, no mas simple.
+    async def _handle_rate_limit_exceeded(  # NOSONAR
+        request: Request, exc: Exception
+    ) -> Response:
         # Thin adapter: slowapi's own handler types its second parameter as
         # RateLimitExceeded specifically, which mypy rejects as narrower
         # than the Exception FastAPI's add_exception_handler expects.
