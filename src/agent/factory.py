@@ -211,12 +211,18 @@ def create_spark_agent(
         model if model is not None else settings.model_string,
         max_tokens=settings.max_tokens,
     )
-    fast_model_resolved = _resolve_model(
-        fast_model
-        if fast_model is not None
-        else (model if model is not None else settings.fast_model_string),
-        max_tokens=settings.max_tokens,
-    )
+    # Precedencia del modelo rapido, de mas especifico a menos: el que se pase
+    # explicitamente; si no, el `model` general -- para que quien pasa un solo
+    # override lo vea aplicado a los dos y no se le cuele el de settings por
+    # detras; y solo si tampoco hay, el de settings.
+    if fast_model is not None:
+        fast_model_choice = fast_model
+    elif model is not None:
+        fast_model_choice = model
+    else:
+        fast_model_choice = settings.fast_model_string
+
+    fast_model_resolved = _resolve_model(fast_model_choice, max_tokens=settings.max_tokens)
 
     # SubAgent is a TypedDict; mypy sees plain dict[str, Sequence[object]] from
     # the imported constants, so we cast to satisfy the SubAgent contract.

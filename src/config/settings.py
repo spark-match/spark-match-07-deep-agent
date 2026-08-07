@@ -202,7 +202,13 @@ class Settings(BaseSettings):
                 "exact origins allowed to call this API instead."
             )
         for origin in self.cors_origins:
-            if not (origin.startswith("http://") or origin.startswith("https://")):
+            # El "http://" de la linea de abajo no abre ninguna conexion: es el
+            # prefijo que se EXIGE a un origen de la lista, y tiene que
+            # aceptarse porque en local el frontend corre en http://localhost.
+            # De ahi la marca de supresion al final de esa linea -- y aqui no
+            # se escribe su nombre, porque Sonar intenta parsear como supresion
+            # cualquier comentario donde aparezca, incluido este.
+            if not origin.startswith(("http://", "https://")):  # NOSONAR
                 raise ValueError(
                     f"SPARK_CORS_ORIGINS entry {origin!r} must start with 'http://' or 'https://'."
                 )
