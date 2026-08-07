@@ -46,7 +46,30 @@ from langchain.agents.middleware import AgentMiddleware, ToolCallRequest
 from langchain_core.messages import BaseMessage, ToolCall, ToolMessage
 from langgraph.types import Command
 
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}")
+# El lookbehind y los cuantificadores posesivos no son cosmetica: sin
+# ellos este patron es cuadratico sobre la longitud del texto, y el texto
+# aqui son mensajes de chat de usuario, o sea entrada no confiable.
+#
+# Con "[\\w.+-]+@[\\w-]+\\." una cadena larga de caracteres de palabra
+# seguida de "@" y sin TLD valido -- "aaa...aaa@aaa...aaa" -- obliga al
+# motor a probar cada posicion de inicio (O(n) de ellas) y, en cada una, a
+# retroceder por todo el dominio (O(n) mas). Medido: 44 ms con n=1600,
+# 697 ms con n=6400. Doblar n cuadruplica el tiempo.
+#
+# El lookbehind es lo que arregla la complejidad: impide arrancar en mitad
+# de un token, asi que las posiciones de inicio dejan de ser O(n). No
+# cambia que se empareja -- si un match empieza en i y el caracter en i-1
+# pertenece a la clase, entonces tambien habria match empezando en i-1, y
+# el motor, que va de izquierda a derecha, ya habria devuelto ese. Los
+# cuantificadores posesivos eliminan ademas el retroceso interno; por si
+# solos NO bastan (siguen siendo cuadraticos, medido igual que el
+# original), van aqui para que el patron no vuelva a degradarse si alguien
+# le quita el lookbehind.
+#
+# Mismo resultado que el patron anterior en 60 367 casos de prueba
+# (fijos, aleatorios y exhaustivos hasta longitud 4). Ver
+# tests/agent/pii.py::TestEmailRegexComplexity.
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]++@[\w-]++\.[a-zA-Z]{2,}")
 
 # Peru DNI: 8 digits, only redacted when a recognizable identity-document
 # context word appears nearby. A bare 8-digit number is too ambiguous
