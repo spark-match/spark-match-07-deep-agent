@@ -19,6 +19,8 @@ verification for every token.
 
 from __future__ import annotations
 
+import asyncio
+
 from cachetools import TTLCache
 
 from src.config import get_settings
@@ -66,8 +68,20 @@ def load_jwt_secret_sync() -> bytes:
 
 
 async def load_jwt_secret() -> bytes:
-    """Return the raw UTF-8 bytes of the JWT signing secret, cached."""
-    return load_jwt_secret_sync()
+    """Return the raw UTF-8 bytes of the JWT signing secret, cached.
+
+    Va por un hilo aparte y no directo a :func:`load_jwt_secret_sync`. El
+    motivo no es cosmetico: cuando la cache caduca -- cada
+    ``jwt_secret_cache_seconds``, cinco minutos por defecto -- el camino
+    sincrono hace dos llamadas boto3 seguidas, y boto3 bloquea. Como
+    ``require_auth`` espera esto en CADA peticion, esa espera ocurria dentro
+    del bucle de eventos: durante los dos viajes a AWS se paraban tambien
+    todas las demas peticiones en vuelo, streams SSE incluidos.
+
+    Con la cache caliente, que es lo normal, esto es un salto de hilo y
+    vuelta.
+    """
+    return await asyncio.to_thread(load_jwt_secret_sync)
 
 
 def clear_cache() -> None:

@@ -166,7 +166,16 @@ class ProfilePersistMiddleware(AgentMiddleware):
         self._submit(state, runtime)
         return None
 
-    async def aafter_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
+    # Si, el cuerpo es identico al de `after_agent`, y tiene que serlo.
+    # LangChain elige uno u otro segun invoques el grafo con `invoke` o con
+    # `ainvoke`, asi que el middleware esta obligado a ofrecer los dos. Lo
+    # unico que hacen es delegar en `_submit`, que ya es no bloqueante -- deja
+    # el trabajo en un executor y vuelve -- de modo que la version async no
+    # tiene nada que esperar. Unificarlos exigiria que el camino sincrono
+    # arrancara un bucle de eventos para nada.
+    async def aafter_agent(  # NOSONAR
+        self, state: AgentState, runtime: Runtime[Any]
+    ) -> dict[str, Any] | None:
         self._submit(state, runtime)
         return None
 

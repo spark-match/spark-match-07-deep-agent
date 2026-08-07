@@ -185,7 +185,9 @@ async def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]
         # 401-equivalent: our own API key is missing/invalid. Falling back
         # to DuckDuckGo would silently mask a persistent config problem
         # instead of surfacing it, so we stop here without trying DDG.
-        logger.error("Tavily rejected the request due to API key configuration: %s", e)
+        # `exception` y no `error`: esta rama es justo la que hay que
+        # diagnosticar desde los logs de ECS, y `error` tira el traceback.
+        logger.exception("Tavily rejected the request due to API key configuration: %s", e)
         return {
             "status": "error",
             "data": None,
