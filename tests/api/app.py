@@ -35,6 +35,7 @@ from langchain_core.messages import AIMessage
 from starlette.testclient import TestClient
 
 from src.agent.user_context import DEFAULT_USER_ID
+from src.api.app import STREAM_FAILURE_MESSAGE
 from src.auth import secret_loader
 from src.auth.jwt_validator import JWT_AUDIENCE, JWT_ISSUER
 from src.config import get_settings
@@ -481,6 +482,72 @@ class TestRawEventsAreNotStreamed:
         types = [event["type"] for event in _sse_events(response.text)]
 
         assert "RAW" in types
+
+
+class TestATurnThatDiesMidStream:
+    """Un fallo dentro del grafo tiene que llegar al navegador como evento.
+
+    Antes no llegaba: la excepcion salia como "Exception in ASGI
+    application" y el SSE se cortaba sin emitir nada. El frontend terminaba
+    su bucle sin error, asi que el estudiante veia su pregunta y despues
+    nada -- ni respuesta, ni aviso. Medido en dev el 2026-08-08 con un
+    historial que Bedrock rechazaba: la persona reintento cuatro veces
+    seguidas porque no habia forma de saber que estaba fallando.
+    """
+
+    @staticmethod
+    def _exploding_agent(boom: str):
+        from ag_ui.core.events import RunStartedEvent
+
+        class ExplodingAgent:
+            """Arranca el turno y revienta a mitad, como el fallo real."""
+
+            config: dict = {}
+
+            def clone(self):
+                return self
+
+            async def run(self, _input):
+                yield RunStartedEvent(thread_id="t", run_id="r")
+                raise RuntimeError(boom)
+
+        return ExplodingAgent()
+
+    def test_emits_run_error_instead_of_ending_the_stream_in_silence(self, client):
+        client.app.state.langgraph_agent = self._exploding_agent("boom")
+
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="dead-turn"),
+            headers={"Authorization": f"Bearer {_make_token(user_id='u-dead-turn')}"},
+        )
+
+        types = [event["type"] for event in _sse_events(response.text)]
+
+        assert response.status_code == 200
+        assert types == ["RUN_STARTED", "RUN_ERROR"]
+
+    def test_the_student_never_reads_the_internals_of_the_failure(self, client):
+        # El mensaje real de este fallo lleva ids internos y el indice del
+        # mensaje del historial. Es exactamente lo que no debe salir por
+        # pantalla, por la misma razon por la que se filtran los RAW.
+        detalle = (
+            "messages.22: `tool_use` ids were found without `tool_result` "
+            "blocks immediately after: toolu_bdrk_013v2T9o6kDS2QarNA7DVroF"
+        )
+        client.app.state.langgraph_agent = self._exploding_agent(detalle)
+
+        response = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="dead-turn-detail"),
+            headers={"Authorization": f"Bearer {_make_token(user_id='u-dead-detail')}"},
+        )
+
+        error = next(e for e in _sse_events(response.text) if e["type"] == "RUN_ERROR")
+
+        assert error["message"] == STREAM_FAILURE_MESSAGE
+        assert "toolu_bdrk" not in response.text
+        assert "messages.22" not in response.text
 
 
 class TestProfileDoesNotPolluteTheMessageList:
