@@ -1,9 +1,10 @@
 """MCP server exposing the Spark Match agent's tools (Sprint 8, task 8.5).
 
 Scope decision: exposes only. This module lets other MCP clients (Claude
-Desktop, other agents, etc.) call this project's 4 tools
-(``evaluate_riasec_profile``, ``search_careers``, ``calculate_affinity``,
-``web_search``) over the Model Context Protocol. It does **not** consume
+Desktop, other agents, etc.) call this project's 5 tools
+(``evaluate_riasec_profile``, ``search_careers``, ``search_programs``,
+``calculate_affinity``, ``web_search``) over the Model Context Protocol.
+It does **not** consume
 external MCP servers -- that's the other half of the roadmap's task 8.5
 and was explicitly scoped out for this PR (see ``.mcp.json`` / the PR
 description for the reasoning).
@@ -33,14 +34,16 @@ from mcp.server.mcpserver.exceptions import ToolError
 from src.tools.assessment.handler import evaluate_riasec_profile_handler
 from src.tools.catalog.handler import search_careers_handler
 from src.tools.matching.handler import calculate_affinity_handler
+from src.tools.programs.handler import DEFAULT_LIMIT, search_programs_handler
 from src.tools.web_search.handler import web_search_handler
 
 mcp_server: MCPServer = MCPServer(
     name="spark-match-agent",
     instructions=(
         "Spark Match's vocational-guidance tools: RIASEC assessment "
-        "scoring, career catalog search, career-affinity matching, and "
-        "web search for current career/education information."
+        "scoring, career catalog search, real Peruvian university/institute "
+        "program lookup (Ponte en Carrera, MINEDU), career-affinity "
+        "matching, and web search for current career/education information."
     ),
 )
 
@@ -101,6 +104,44 @@ def search_careers(query: str, field: str | None = None) -> dict[str, Any]:
         field: Optional field filter (e.g. "Tecnología", "Salud").
     """
     return _unwrap_or_raise(search_careers_handler(query=query, field=field))
+
+
+@mcp_server.tool()
+def search_programs(
+    career: str | None = None,
+    riasec_profile: str | None = None,
+    location: str | None = None,
+    institution_type: str | None = None,
+    management_type: str | None = None,
+    max_annual_cost: float | None = None,
+    limit: int = DEFAULT_LIMIT,
+) -> dict[str, Any]:
+    """Look up real Peruvian degree programs (Ponte en Carrera, MINEDU).
+
+    Each program carries an ``estimated`` list naming the numbers that were
+    NOT measured for it -- those are the median of its career family, not a
+    fact about that program. Present them as estimates or leave them out.
+
+    Args:
+        career: Free text matched against career name, family and institution.
+        riasec_profile: 3-letter RIASEC code; keeps careers sharing a letter.
+        location: Peruvian department (e.g. "Lima").
+        institution_type: "Universidad" or "Instituto".
+        management_type: "Pública" or "Privada".
+        max_annual_cost: Maximum annual cost in soles.
+        limit: How many programs to return (capped at 25).
+    """
+    return _unwrap_or_raise(
+        search_programs_handler(
+            career=career,
+            riasec_profile=riasec_profile,
+            location=location,
+            institution_type=institution_type,
+            management_type=management_type,
+            max_annual_cost=max_annual_cost,
+            limit=limit,
+        )
+    )
 
 
 @mcp_server.tool()
