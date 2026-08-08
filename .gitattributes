@@ -13,3 +13,10 @@
 *.jsonl text eol=lf working-tree-encoding=UTF-8
 *.yml text eol=lf working-tree-encoding=UTF-8
 *.yaml text eol=lf working-tree-encoding=UTF-8
+
+# Los datos, con eol=lf tambien en el arbol de trabajo. Sin fijarlo, `* text=auto`
+# le da CRLF a un checkout de Windows y `scripts/build_programs_dataset.py`, que
+# escribe LF, dejaria el fichero "modificado" en cada regeneracion aunque el dato
+# fuera identico. La reproducibilidad que promete data/programs/README.md depende
+# de esto.
+*.csv text eol=lf working-tree-encoding=UTF-8

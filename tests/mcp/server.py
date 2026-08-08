@@ -33,12 +33,13 @@ class TestServerIdentity:
 
 
 class TestToolRegistration:
-    async def test_all_four_tools_are_registered(self):
+    async def test_every_tool_is_registered(self):
         tools = await mcp_server.list_tools()
         names = {t.name for t in tools}
         assert names == {
             "evaluate_riasec_profile",
             "search_careers",
+            "search_programs",
             "calculate_affinity",
             "web_search",
         }
@@ -119,6 +120,25 @@ class TestCalculateAffinityTool:
         assert result.is_error is False
         assert "matches" in result.structured_content
         assert len(result.structured_content["matches"]) <= 3
+
+
+class TestSearchProgramsTool:
+    async def test_success_returns_real_peruvian_programs(self):
+        result = await mcp_server.call_tool(
+            "search_programs", {"career": "enfermeria", "location": "Lima", "limit": 3}
+        )
+
+        assert result.is_error is False
+        programs = result.structured_content["programs"]
+        assert programs
+        assert all(p["location"] == "Lima" for p in programs)
+
+    async def test_every_program_says_which_numbers_are_estimated(self):
+        # Sin esta lista, un ingreso imputado (la mediana de la familia de
+        # carrera) es indistinguible de uno medido para quien consuma el MCP.
+        result = await mcp_server.call_tool("search_programs", {"career": "derecho", "limit": 5})
+
+        assert all("estimated" in p for p in result.structured_content["programs"])
 
 
 class TestWebSearchTool:

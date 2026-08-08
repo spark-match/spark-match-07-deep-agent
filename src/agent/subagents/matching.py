@@ -11,14 +11,19 @@ engineering changes show up as diff-friendly Markdown reviews.
 from src.prompts import MATCHING_SYSTEM_PROMPT
 from src.tools.catalog import search_careers
 from src.tools.matching import calculate_affinity
+from src.tools.programs import search_programs
 
 MATCHING_SUBAGENT = {
     "name": "matching",
     "description": (
         "Calcula la afinidad entre el perfil RIASEC del estudiante y todas las carreras "
         "del catálogo. Devuelve un ranking Top-5 con scores de afinidad (%) y explicaciones "
-        "personalizadas de por qué cada carrera encaja con el perfil."
+        "personalizadas de por qué cada carrera encaja con el perfil, y puede aterrizarlas "
+        "en universidades e institutos reales del Perú con su costo, duración y tasa de "
+        "admisión."
     ),
     "system_prompt": MATCHING_SYSTEM_PROMPT,
-    "tools": [search_careers, calculate_affinity],
+    # `search_programs` es lo que convierte una recomendación abstracta en algo
+    # accionable: dónde se estudia esa carrera, cuánto cuesta y qué se gana.
+    "tools": [search_careers, search_programs, calculate_affinity],
 }

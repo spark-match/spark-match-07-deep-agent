@@ -38,6 +38,7 @@ from src.tools import (
     calculate_affinity,
     evaluate_riasec_profile,
     search_careers,
+    search_programs,
     web_search,
 )
 
@@ -285,6 +286,7 @@ def create_spark_agent(
         tools=[
             evaluate_riasec_profile,
             search_careers,
+            search_programs,
             calculate_affinity,
             web_search,
             manage_prefs,
