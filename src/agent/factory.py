@@ -32,6 +32,7 @@ from src.agent.subagents import (
     MATCHING_SUBAGENT,
     PLANNING_SUBAGENT,
 )
+from src.agent.tool_call_repair import ToolCallRepairMiddleware
 from src.auth.context import AgentContext
 from src.config import get_settings
 from src.prompts import SYSTEM_PROMPT
@@ -204,6 +205,14 @@ def create_spark_agent(
       subagente entero corre en silencio dentro de ella. Ver
       ``src/agent/subagent_events.py``.
 
+    Historial invalido:
+    - ``ToolCallRepairMiddleware`` completa, antes de cada llamada al
+      modelo, toda ``tool_call`` que se quedo sin su ``ToolMessage``. Sin
+      eso, un turno cortado entre el nodo ``model`` y el nodo ``tools``
+      (recargar la pagina, cambiar de conversacion, caerse el SSE) deja el
+      historial en un estado que Anthropic rechaza, y esa conversacion no
+      vuelve a funcionar nunca. Ver ``src/agent/tool_call_repair.py``.
+
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
     - Que carreras me convienen -> matching subagent
@@ -293,6 +302,11 @@ def create_spark_agent(
     middleware.append(
         IntentRouterMiddleware(fast_model=fast_model_resolved, strong_model=strong_model)
     )
+    # El ultimo con hooks de modelo, o sea el mas pegado al modelo: cualquier
+    # otro que reordene o inyecte mensajes ya termino, y esto es lo ultimo que
+    # los mira antes de que salgan hacia Bedrock. Ponerlo antes dejaria a un
+    # middleware posterior la posibilidad de volver a romper el historial.
+    middleware.append(ToolCallRepairMiddleware())
     if store is not None:
         middleware.append(ProfilePersistMiddleware(reflection_executor))
 
