@@ -26,6 +26,7 @@ from src.agent.memory_middleware import (
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.pii import PIIRedactionMiddleware
 from src.agent.router_middleware import IntentRouterMiddleware
+from src.agent.subagent_events import SubagentEventsMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
     MATCHING_SUBAGENT,
@@ -194,6 +195,14 @@ def create_spark_agent(
       non-goal note (``/memories/AGENTS.md`` writes via deepagents' own
       filesystem tools are not covered).
 
+    Visibilidad de la delegacion:
+    - ``SubagentEventsMiddleware`` emite un par de eventos custom alrededor
+      de cada llamada a la herramienta ``task``, que es como deepagents
+      expone a los tres subagentes. Sin eso la delegacion es invisible
+      desde fuera: al navegador solo le llega una tool call generica y el
+      subagente entero corre en silencio dentro de ella. Ver
+      ``src/agent/subagent_events.py``.
+
     The coordinator decides when to delegate:
     - Quiero descubrir mi perfil -> assessment subagent
     - Que carreras me convienen -> matching subagent
@@ -253,6 +262,12 @@ def create_spark_agent(
     # are opt-in on store being present.
     memory_sources = ["/memories/AGENTS.md"] if store is not None else None
     middleware: list[Any] = [
+        # Primero de la lista, o sea el mas externo de los que envuelven
+        # llamadas a herramientas: asi la duracion que reporta es la que el
+        # estudiante espera de verdad, con la redaccion de PII y el guard de
+        # assessment ya incluidos dentro. No tiene hooks de modelo, asi que
+        # ponerlo aqui no altera el orden de Guardrails -> ContentFilter.
+        SubagentEventsMiddleware(),
         GuardrailsMiddleware(),
         ContentFilterMiddleware(classifier_model=fast_model_resolved),
     ]
