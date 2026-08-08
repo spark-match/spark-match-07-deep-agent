@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 
-from ag_ui.core.events import EventType
+from ag_ui.core.events import EventType, RunErrorEvent
 from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.endpoint import EventEncoder, RunAgentInput
 from fastapi import Depends, FastAPI, Request
@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 # Path under which the AG-UI streaming endpoint is mounted. Frontend
 # (04-frontend) connects here over SSE.
 AG_UI_PATH = "/ag-ui"
+
+# Lo que se le manda al navegador cuando el turno revienta a mitad del
+# stream. Fijo y sin el detalle de la excepcion a proposito: ese detalle
+# lleva nombres de modulos, ids internos y a veces trozos del historial --
+# la misma razon por la que se filtran los eventos RAW. El detalle va al log.
+STREAM_FAILURE_MESSAGE = "El orientador no pudo terminar de responder. Intentalo de nuevo."
 
 
 @asynccontextmanager
@@ -310,10 +316,29 @@ async def ag_ui_endpoint(
     }
 
     async def event_generator() -> AsyncIterator[str]:
-        async for event in request_agent.run(input_data):
-            if _is_internal_raw_event(event, settings.sse_emit_raw_events):
-                continue
-            yield encoder.encode(event)
+        # El try no es defensivo por si acaso: sin el, cualquier excepcion
+        # dentro del grafo sale como "Exception in ASGI application" y el SSE
+        # se corta sin emitir NADA. El frontend termina su bucle sin error,
+        # asi que el estudiante se queda mirando su pregunta: ni respuesta,
+        # ni aviso, ni forma de saber que paso. Medido en dev el 2026-08-08
+        # con un historial invalido (ver src/agent/tool_call_repair.py): el
+        # turno moria en silencio y el estudiante lo reintentaba una y otra
+        # vez. RUN_ERROR es el evento que el protocolo tiene para esto y el
+        # frontend ya lo maneja.
+        #
+        # CancelledError hereda de BaseException, no de Exception, asi que
+        # un cliente que se va (cerrar la pestana, cambiar de conversacion)
+        # no pasa por aqui: eso no es un fallo y no hay a quien avisarle.
+        try:
+            async for event in request_agent.run(input_data):
+                if _is_internal_raw_event(event, settings.sse_emit_raw_events):
+                    continue
+                yield encoder.encode(event)
+        except Exception:
+            logger.exception("El turno fallo a mitad del stream (thread_id=%s)", thread_id)
+            yield encoder.encode(
+                RunErrorEvent(message=STREAM_FAILURE_MESSAGE, code="agent_stream_failed")
+            )
 
     return StreamingResponse(
         # Wrapped so a long silence inside a turn (classifier call, main
