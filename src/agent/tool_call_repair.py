@@ -38,6 +38,27 @@ Dos decisiones que no son obvias:
   no conviene manipular para arreglar un sintoma. El efecto util es que
   esto **revive tambien los hilos que ya estaban envenenados**, sin
   migracion ni borrado.
+
+Donde vive una llamada, que no es un solo sitio
+------------------------------------------------
+
+La primera version de este modulo miraba solo ``message.tool_calls`` y **no
+arreglo nada en produccion**: el turno seguia fallando y el middleware ni
+siquiera registraba haber reparado algo. El motivo esta en
+``langchain_aws/chat_models/bedrock.py`` (lineas 611-637): el payload de
+Bedrock se construye desde los DOS sitios donde puede vivir una llamada, la
+lista ``tool_calls`` y los bloques ``{"type": "tool_use"}`` dentro de
+``content``. Cuando un bloque de ``content`` trae un id que ``tool_calls``
+no menciona, se manda tal cual::
+
+    else:
+        tool_blocks.append({k: v for k, v in item.items() if ...})
+
+Y un turno cortado a mitad deja exactamente eso: el bloque en ``content``
+consolidado y ``tool_calls`` sin consolidar. Asi que aqui se mira la union
+de ambos, que es lo que la API va a ver de verdad. Misma idea del lado de
+las respuestas: un ``tool_result`` puede llegar como ``ToolMessage`` o como
+bloque dentro de ``content``.
 """
 
 import logging
@@ -59,52 +80,104 @@ ORPHAN_TOOL_RESULT = (
 )
 
 
-def _tool_call_ids(message: AIMessage) -> list[str]:
-    """Ids de las llamadas de este mensaje, saltando las que no lo traen."""
-    return [str(call["id"]) for call in message.tool_calls if call.get("id")]
+def _content_blocks(message: AnyMessage) -> list[dict[str, Any]]:
+    """Los bloques de `content`, o nada si el contenido es texto plano."""
+    content = message.content
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, dict)]
 
 
-def repair_tool_calls(messages: list[AnyMessage]) -> list[AnyMessage]:
-    """Devuelve el historial con un resultado para cada llamada que no lo tenga.
+def _tool_use_ids(message: AIMessage) -> list[str]:
+    """Ids que este mensaje va a mandar como `tool_use`, mire donde mire la API.
 
-    Recorre en orden y trata como respuestas de un ``AIMessage`` los
-    ``ToolMessage`` que van INMEDIATAMENTE detras. Esa es la posicion que
-    exige la API y la que produce LangGraph, asi que buscar el id por todo
-    el historial daria por buena una respuesta que en realidad esta
-    colocada donde el modelo no la acepta.
-
-    La lista de entrada no se modifica.
+    Union de `tool_calls` y de los bloques `tool_use` de `content`. Mirar
+    solo `tool_calls` fue el motivo exacto de que la primera version de esto
+    no arreglara nada: el bloque huerfano vivia en `content`.
     """
-    repaired: list[AnyMessage] = []
+    ids = [str(call["id"]) for call in message.tool_calls if call.get("id")]
+    seen = set(ids)
+    for block in _content_blocks(message):
+        block_id = block.get("id")
+        if block.get("type") != "tool_use" or not block_id:
+            continue
+        if str(block_id) not in seen:
+            seen.add(str(block_id))
+            ids.append(str(block_id))
+    return ids
+
+
+def _tool_result_ids(message: AnyMessage) -> set[str]:
+    """Ids que este mensaje responde. Vacio si no responde a ninguna llamada."""
+    ids: set[str] = set()
+    if isinstance(message, ToolMessage) and message.tool_call_id:
+        ids.add(str(message.tool_call_id))
+    for block in _content_blocks(message):
+        used = block.get("tool_use_id")
+        if block.get("type") == "tool_result" and used:
+            ids.add(str(used))
+    return ids
+
+
+def _gaps(messages: list[AnyMessage]) -> list[tuple[int, list[str]]]:
+    """Por cada bloque de llamadas, donde insertar y que ids faltan.
+
+    Recorre en orden y toma como respuestas de un ``AIMessage`` las que van
+    INMEDIATAMENTE detras. Esa es la posicion que exige la API y la que
+    produce LangGraph, asi que buscar el id por todo el historial daria por
+    buena una respuesta colocada donde el modelo no la acepta.
+    """
+    found: list[tuple[int, list[str]]] = []
     index = 0
     total = len(messages)
 
     while index < total:
         message = messages[index]
-        repaired.append(message)
         index += 1
 
-        if not isinstance(message, AIMessage) or not message.tool_calls:
+        if not isinstance(message, AIMessage):
+            continue
+        pending = _tool_use_ids(message)
+        if not pending:
             continue
 
         answered: set[str] = set()
         while index < total:
-            # A una variable antes del isinstance: comprobar el tipo sobre
-            # `messages[index]` no estrecha nada para quien lee los tipos.
-            following = messages[index]
-            if not isinstance(following, ToolMessage):
+            replied = _tool_result_ids(messages[index])
+            if not replied:
                 break
-            answered.add(str(following.tool_call_id))
-            repaired.append(following)
+            answered |= replied
             index += 1
 
-        for call_id in _tool_call_ids(message):
-            if call_id in answered:
-                continue
-            repaired.append(
-                ToolMessage(content=ORPHAN_TOOL_RESULT, tool_call_id=call_id, status="error")
-            )
+        missing = [call_id for call_id in pending if call_id not in answered]
+        if missing:
+            found.append((index, missing))
 
+    return found
+
+
+def unpaired_tool_use_ids(messages: list[AnyMessage]) -> list[str]:
+    """Ids que la API va a rechazar: `tool_use` sin su `tool_result` detras.
+
+    Es la misma comprobacion que hace Anthropic, y se usa para verificar que
+    la reparacion sirvio de algo antes de mandar la peticion.
+    """
+    return [call_id for _, ids in _gaps(messages) for call_id in ids]
+
+
+def repair_tool_calls(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """Devuelve el historial con un resultado para cada llamada que no lo tenga.
+
+    La lista de entrada no se modifica.
+    """
+    repaired = list(messages)
+    # De atras hacia delante: insertar por delante desplazaria los indices
+    # que quedan por usar.
+    for insert_at, missing in reversed(_gaps(messages)):
+        repaired[insert_at:insert_at] = [
+            ToolMessage(content=ORPHAN_TOOL_RESULT, tool_call_id=call_id, status="error")
+            for call_id in missing
+        ]
     return repaired
 
 
@@ -119,18 +192,33 @@ class ToolCallRepairMiddleware(AgentMiddleware[Any, Any, Any]):
 
     def _repair(self, request: ModelRequest[Any]) -> ModelRequest[Any]:
         messages = list(request.messages)
-        repaired = repair_tool_calls(messages)
-        added = len(repaired) - len(messages)
-        if not added:
+        missing = unpaired_tool_use_ids(messages)
+        if not missing:
             return request
 
-        # A nivel WARNING y con el numero: que esto salte es que una
-        # conversacion venia rota, y saber cuantas veces pasa es la unica
-        # forma de enterarse de si el corte de turnos es frecuente.
+        repaired = repair_tool_calls(messages)
+
+        # A nivel WARNING y con los ids: que esto salte significa que una
+        # conversacion venia rota. Con los ids delante, un fallo posterior se
+        # puede cruzar contra el que reporta la API en vez de adivinar --
+        # que es justo lo que costo la primera version de esto, que no
+        # registraba nada y parecia estar funcionando.
         logger.warning(
-            "tool_call_repair: %d llamada(s) sin resultado completadas en el historial",
-            added,
+            "tool_call_repair: %d llamada(s) sin resultado completadas: %s",
+            len(missing),
+            ", ".join(missing),
         )
+
+        # Autocomprobacion con la misma regla que aplica la API. Si algo
+        # queda sin emparejar, la peticion va a fallar igual y conviene que
+        # el log lo diga aqui y no solo como ValidationException.
+        still_broken = unpaired_tool_use_ids(repaired)
+        if still_broken:
+            logger.error(
+                "tool_call_repair: siguen sin emparejar %s -- la peticion va a fallar",
+                ", ".join(still_broken),
+            )
+
         return request.override(messages=repaired)
 
     def wrap_model_call(
@@ -150,4 +238,9 @@ class ToolCallRepairMiddleware(AgentMiddleware[Any, Any, Any]):
         return await handler(self._repair(request))
 
 
-__all__ = ["ORPHAN_TOOL_RESULT", "ToolCallRepairMiddleware", "repair_tool_calls"]
+__all__ = [
+    "ORPHAN_TOOL_RESULT",
+    "ToolCallRepairMiddleware",
+    "repair_tool_calls",
+    "unpaired_tool_use_ids",
+]

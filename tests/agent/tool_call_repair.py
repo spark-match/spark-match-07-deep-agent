@@ -18,6 +18,7 @@ from src.agent.tool_call_repair import (
     ORPHAN_TOOL_RESULT,
     ToolCallRepairMiddleware,
     repair_tool_calls,
+    unpaired_tool_use_ids,
 )
 
 
@@ -35,19 +36,7 @@ def _orphaned_history() -> list[AnyMessage]:
 
 def _ids_without_result(messages: list[AnyMessage]) -> set[str]:
     """Lo mismo que valida la API: ids de tool_use sin su tool_result detras."""
-    pending: set[str] = set()
-    for index, message in enumerate(messages):
-        if not isinstance(message, AIMessage) or not message.tool_calls:
-            continue
-        answered = {
-            str(m.tool_call_id)
-            for m in messages[index + 1 :]
-            if isinstance(m, ToolMessage)
-            # Solo el bloque contiguo cuenta: es lo que exige Anthropic.
-            and all(isinstance(x, ToolMessage) for x in messages[index + 1 : messages.index(m)])
-        }
-        pending |= {str(c["id"]) for c in message.tool_calls if str(c["id"]) not in answered}
-    return pending
+    return set(unpaired_tool_use_ids(messages))
 
 
 class TestRepairToolCalls:
@@ -151,6 +140,90 @@ class TestRepairToolCalls:
         assert repair_tool_calls([]) == []
 
 
+class TestACallThatOnlyExistsInsideContent:
+    """El caso real de dev, y el que la primera version de esto no veia.
+
+    ``langchain_aws/chat_models/bedrock.py`` (lineas 611-637) construye el
+    payload desde los DOS sitios donde puede vivir una llamada: la lista
+    ``tool_calls`` y los bloques ``tool_use`` de ``content``. Un bloque cuyo
+    id no esta en ``tool_calls`` se manda tal cual. Un turno cortado a mitad
+    deja exactamente eso, y mirar solo ``tool_calls`` daba el historial por
+    sano mientras la API lo rechazaba.
+    """
+
+    @staticmethod
+    def _content_only() -> list[AnyMessage]:
+        return [
+            HumanMessage(content="cuando abren las inscripciones de beca 18"),
+            AIMessage(
+                content=[
+                    {"type": "text", "text": "Dejame buscar."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_bdrk_013v2T9o6kDS2QarNA7DVroF",
+                        "name": "web_search",
+                        "input": {"query": "beca 18"},
+                    },
+                ],
+                # Vacio a proposito: es lo que hace invisible al bloque.
+                tool_calls=[],
+            ),
+        ]
+
+    def test_the_orphan_is_seen_even_though_tool_calls_is_empty(self):
+        assert unpaired_tool_use_ids(self._content_only()) == [
+            "toolu_bdrk_013v2T9o6kDS2QarNA7DVroF"
+        ]
+
+    def test_and_it_gets_repaired(self):
+        repaired = repair_tool_calls(self._content_only())
+
+        assert unpaired_tool_use_ids(repaired) == []
+        assert repaired[-1].tool_call_id == "toolu_bdrk_013v2T9o6kDS2QarNA7DVroF"
+
+    def test_a_content_block_that_does_have_its_result_is_left_alone(self):
+        messages = [
+            *self._content_only(),
+            ToolMessage(content="[]", tool_call_id="toolu_bdrk_013v2T9o6kDS2QarNA7DVroF"),
+        ]
+
+        assert unpaired_tool_use_ids(messages) == []
+        assert repair_tool_calls(messages) == messages
+
+    def test_the_same_id_in_both_places_counts_once(self):
+        # `tool_calls` y el bloque de `content` describen LA MISMA llamada:
+        # reponer dos resultados para un solo `tool_use` es otro payload
+        # invalido, no una reparacion.
+        messages: list[AnyMessage] = [
+            AIMessage(
+                content=[{"type": "tool_use", "id": "tc-1", "name": "web_search", "input": {}}],
+                tool_calls=[_call("tc-1")],
+            )
+        ]
+
+        repaired = repair_tool_calls(messages)
+
+        assert [m for m in repaired if isinstance(m, ToolMessage)].__len__() == 1
+
+    def test_a_result_that_arrives_as_a_content_block_also_counts(self):
+        # La contraparte: un `tool_result` puede venir como bloque en vez de
+        # como ToolMessage. Tratarlo como "sin responder" insertaria un
+        # resultado duplicado.
+        messages: list[AnyMessage] = [
+            AIMessage(content="", tool_calls=[_call("tc-1")]),
+            HumanMessage(content=[{"type": "tool_result", "tool_use_id": "tc-1", "content": "[]"}]),
+        ]
+
+        assert unpaired_tool_use_ids(messages) == []
+
+    def test_a_block_with_no_id_is_not_invented(self):
+        messages: list[AnyMessage] = [
+            AIMessage(content=[{"type": "tool_use", "name": "web_search", "input": {}}])
+        ]
+
+        assert unpaired_tool_use_ids(messages) == []
+
+
 class TestToolCallRepairMiddleware:
     """El middleware, por el hook que usa produccion (async)."""
 
@@ -192,9 +265,10 @@ class TestToolCallRepairMiddleware:
 
         assert seen[0] == healthy
 
-    async def test_logs_a_warning_when_it_has_to_repair(self, caplog):
-        # Que esto salte significa que una conversacion venia rota. Sin el
-        # log no hay forma de saber si pasa una vez al mes o cada tarde.
+    async def test_logs_the_ids_it_had_to_complete(self, caplog):
+        # Con los ids delante, un fallo posterior se cruza contra el que
+        # reporta la API en vez de adivinar. La primera version no registraba
+        # nada y por eso parecia estar funcionando cuando no lo hacia.
         async def handler(_request: ModelRequest[Any]) -> str:
             return "ok"
 
@@ -204,6 +278,7 @@ class TestToolCallRepairMiddleware:
             )
 
         assert "tool_call_repair" in caplog.text
+        assert "tc-1" in caplog.text
 
     def test_the_sync_hook_repairs_too(self):
         # ag_ui_langgraph solo usa el async, pero una invocacion directa del
