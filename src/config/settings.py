@@ -92,7 +92,13 @@ class Settings(BaseSettings):
     # reduces latency on plan-generation turns without a quality loss for
     # this agent's response shape (conversational + structured tool
     # output, not long-form essays). Applies to both model/fast_model.
-    max_tokens: int = 2048
+    #
+    # 2048 -> 4096: desde la familia 4.6 el thinking adaptativo COMPARTE
+    # este presupuesto con el texto de la respuesta, no va aparte. Con 2048
+    # una respuesta normal precedida de thinking se corta a media frase y
+    # llega con stop_reason=max_tokens. 4096 da margen sin volver a la
+    # latencia que la leccion 9 queria evitar.
+    max_tokens: int = 4096
 
     # --- Agent Configuration ---
     agent_name: str = "spark-match-advisor"

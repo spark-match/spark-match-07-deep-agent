@@ -39,6 +39,7 @@ from src.prompts import SYSTEM_PROMPT
 from src.tools import (
     calculate_affinity,
     evaluate_riasec_profile,
+    recommend_programs,
     search_careers,
     search_programs,
     web_search,
@@ -245,9 +246,23 @@ def create_spark_agent(
 
     # SubAgent is a TypedDict; mypy sees plain dict[str, Sequence[object]] from
     # the imported constants, so we cast to satisfy the SubAgent contract.
+    #
+    # `middleware=` de abajo NO llega a los subagentes: deepagents monta cada
+    # uno con `middleware = list(spec.get("middleware", []))` -- de SU PROPIA
+    # spec (ver deepagents/middleware/subagents.py:494). Ninguna de nuestras
+    # constantes lo declara, asi que ToolCallRepairMiddleware protegia al
+    # coordinador y a nadie mas, justo donde el fallo NO ocurria. Medido el
+    # 2026-08-09: planning_query_cs revento con tool_use huerfano dentro del
+    # subagente de planning, con la defensa cableada un nivel por encima.
+    #
+    # Instancia nueva por subagente a proposito: compartir una sola entre
+    # grafos distintos es pedir que un estado se filtre entre ellos.
     subagents: Sequence[SubAgent] = cast(
         "Sequence[SubAgent]",
-        [ASSESSMENT_SUBAGENT, MATCHING_SUBAGENT, PLANNING_SUBAGENT],
+        [
+            {**spec, "middleware": [*spec.get("middleware", []), ToolCallRepairMiddleware()]}
+            for spec in (ASSESSMENT_SUBAGENT, MATCHING_SUBAGENT, PLANNING_SUBAGENT)
+        ],
     )
 
     manage_prefs = create_manage_memory_tool(
@@ -317,6 +332,7 @@ def create_spark_agent(
             search_careers,
             search_programs,
             calculate_affinity,
+            recommend_programs,
             web_search,
             manage_prefs,
             search_memory,

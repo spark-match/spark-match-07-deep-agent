@@ -1,7 +1,7 @@
 # Servidor MCP (Sprint 8, tarea 8.5)
 
-> Expone las 4 tools del agente (`evaluate_riasec_profile`, `search_careers`,
-> `calculate_affinity`, `web_search`) como servidor [Model Context
+> Expone las 5 tools del agente (`evaluate_riasec_profile`, `search_careers`,
+> `search_programs`, `calculate_affinity`, `web_search`) como servidor [Model Context
 > Protocol](https://modelcontextprotocol.io/) para que clientes MCP externos
 > (Claude Desktop, otros agentes) puedan invocarlas directamente. Ver
 > `ROADMAP-2026-08.md` Sprint 8 para el diseño original y `AGENTS.md` §1.1.

@@ -134,6 +134,60 @@ class TestWebSearchHandlerBudget:
         assert result["status"] == "success"
         assert budget.get_web_search_count() == 1
 
+    async def test_ningun_proveedor_da_resultados_no_gasta_presupuesto(self, monkeypatch):
+        """Una busqueda que no encuentra nada no ha consumido cuota.
+
+        La rama Tavily ya seguia este criterio (`if results:`); la de
+        DuckDuckGo incrementaba igual con la lista vacia.
+        """
+
+        async def empty_tavily(*a):
+            return []
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", empty_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: [])
+
+        await web_search_handler(query="python")
+        assert budget.get_web_search_count() == 0
+
+
+class TestNuncaDevuelveUnResultadoVacio:
+    """Un tool_result vacio deja el tool_use huerfano y Bedrock rechaza la
+    peticion entera.
+
+    Con `status: success` y `results: []`, langchain_aws DESCARTA el
+    tool_result al convertir el mensaje; el tool_use se queda solo y la
+    llamada muere con "ValidationException: tool_use ids were found without
+    tool_result blocks". Medido el 2026-08-09: mato planning_query_cs en 2
+    de 3 repeticiones del experiment spark-match-agent-80dad4e5, y el
+    ToolCallRepairMiddleware no lo cubria porque el fallo ocurria dentro de
+    un subagente (ver TestMiddlewareEnSubagentes).
+    """
+
+    @staticmethod
+    async def _sin_resultados(monkeypatch):
+        async def empty_tavily(*a):
+            return []
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", empty_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: [])
+        return await web_search_handler(query="algo que no existe")
+
+    async def test_sin_resultados_no_devuelve_success(self, monkeypatch):
+        result = await self._sin_resultados(monkeypatch)
+        assert result["status"] == "error"
+
+    async def test_sin_resultados_no_devuelve_una_lista_vacia(self, monkeypatch):
+        # El nucleo de la regresion: nada de `data.results == []`.
+        result = await self._sin_resultados(monkeypatch)
+        assert result["data"] is None
+
+    async def test_el_error_es_texto_util_para_el_agente(self, monkeypatch):
+        # El agente lee esto y decide que hacer; tiene que decir algo.
+        result = await self._sin_resultados(monkeypatch)
+        assert result["errors"]
+        assert "No results found" in result["errors"][0]
+
 
 class TestWebSearchHandlerProviders:
     """Provider selection and fallback behavior."""
