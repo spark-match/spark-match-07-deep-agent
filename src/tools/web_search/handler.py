@@ -221,6 +221,31 @@ async def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]
     # event loop while other requests/tool calls are in flight.
     try:
         results = await asyncio.to_thread(_search_duckduckgo, query, max_results)
+        if not results:
+            # Simetrico con el `if results:` de la rama Tavily, y por un
+            # motivo que va mas alla de la coherencia: devolver
+            # status=success con `results: []` hace que langchain_aws
+            # DESCARTE el tool_result al convertir el mensaje, el tool_use
+            # se queda huerfano y Bedrock rechaza la peticion entera con
+            # "ValidationException: tool_use ids were found without
+            # tool_result blocks". Medido el 2026-08-09: mato
+            # planning_query_cs en 2 de 3 repeticiones del experiment
+            # spark-match-agent-80dad4e5. Un tool_result nunca puede ir
+            # vacio -- mejor un error explicito que el agente puede leer.
+            #
+            # Tampoco se incrementa el presupuesto: una busqueda sin
+            # resultados no ha consumido cuota de nadie, y la rama Tavily
+            # ya sigue ese criterio.
+            logger.info("Web search via DuckDuckGo (fallback) returned no results")
+            return {
+                "status": "error",
+                "data": None,
+                "errors": [
+                    f"No results found for {query!r} (tried Tavily and DuckDuckGo). "
+                    "Try rephrasing the query with different or broader terms."
+                ],
+            }
+
         budget.increment_web_search()
         logger.info(
             "Web search completed via DuckDuckGo (fallback): %d results",
