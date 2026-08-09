@@ -250,8 +250,8 @@ Todas las variables usan el prefijo `SPARK_` y se leen desde `.env` (ver `.env.e
 | `SPARK_AGENT_NAME` | `spark-match-advisor` | Nombre del agente (visible en logs/traces) |
 | `SPARK_MAX_TURNS` | `50` | Máximo de turnos por sesión antes de cortar |
 | `SPARK_TAVILY_API_KEY` | — | API key de Tavily (opcional; sin ella usa DuckDuckGo) |
-| `SPARK_LANGSMITH_API_KEY` | — | API key de LangSmith (opcional; para observabilidad) |
-| `SPARK_LANGSMITH_PROJECT` | `spark-match-agent` | Nombre del proyecto en LangSmith |
+| `SPARK_LANGSMITH_API_KEY` | — | API key de LangSmith (opcional; sin ella no se manda nada) |
+| `SPARK_LANGSMITH_PROJECT` | `spark-match-agent` | Proyecto de LangSmith. Ponerlo siempre: la convención es uno por ambiente (`spark-match-agent-local`, `-dev`, `-prod`) y el default no la sigue |
 | `SPARK_LANGSMITH_TRACING` | `false` | Habilitar tracing en LangSmith (`true` \| `false`) |
 
 ## Troubleshooting
@@ -291,16 +291,27 @@ Esto activará:
 | **A2A** | 🔜 Futuro | Agent ↔ Agent (multi-agent cross-framework) |
 | **A2UI** | 🔜 Futuro | Agent → Frontend (generative UI components) |
 
+## Observabilidad con LangSmith
+
+Implementado. `src/observability/langsmith.py` empuja las settings `SPARK_LANGSMITH_*` a las variables `LANGSMITH_*` que `langchain-aws` y `deepagents` leen solos, y el lifespan de `src/api/app.py` lo llama al arrancar. No hay que instrumentar nada a mano: llega la latencia por subagente (`assessment`, `matching`, `planning`), los tokens por sesión y el input/output completo de cada tool.
+
+Para activarlo en local basta con poner en el `.env`:
+
+```bash
+SPARK_LANGSMITH_API_KEY=lsv2_...        # smith.langchain.com -> Settings -> API Keys
+SPARK_LANGSMITH_PROJECT=spark-match-agent-local
+SPARK_LANGSMITH_TRACING=true
+```
+
+Un proyecto por ambiente — `spark-match-agent-local`, `-dev`, `-prod` — para que las trazas del portátil no caigan donde las de dev. En ECS las pone Terraform a partir del secret de Secrets Manager; el procedimiento está en `docs/runbook-langsmith.md` de **spark-match-02-infrastructure**.
+
+Sin key el agente funciona igual: avisa por WARNING en el arranque y no manda nada.
+
+> Una traza lleva la conversación entera, incluido lo que escribe el estudiante. Es lo que la hace útil y también lo que conviene tener presente antes de dejarla encendida con usuarios reales.
+
 ## Trabajos futuros
 
-- **Observabilidad con LangSmith**: integrar [LangSmith](https://www.langchain.com/langsmith) para tracing, monitoring y debugging de los subagentes y tools. Esto nos dará visibilidad sobre:
-  - Latencia por subagente (`assessment`, `matching`, `planning`)
-  - Tokens consumidos por sesión y por usuario
-  - Traces completos de las tool calls (input/output de `evaluate_riasec_profile`, `search_careers`, `calculate_affinity`, `web_search`)
-  - Detección de alucinaciones y fallos en el razonamiento
-  - Datasets de evaluación a partir de interacciones reales (para regression testing)
-  
-  La integración se hará mediante las variables de entorno `LANGSMITH_API_KEY`, `LANGSMITH_TRACING=true` y `LANGSMITH_PROJECT=spark-match-dev` (o `spark-match-prod`), aprovechando el soporte nativo de `langchain-aws` y `deepagents` con LangSmith.
+- **Datasets de evaluación** a partir de interacciones reales capturadas en LangSmith, para regression testing de los prompts y detección de alucinaciones.
 
 ## Contexto académico
 
