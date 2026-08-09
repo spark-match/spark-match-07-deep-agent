@@ -116,6 +116,10 @@ eval-dev: # Run evals in mock mode (fast, no AWS credentials needed).
 eval-test: # Run evals in live mode (real LangGraph agent; needs AWS creds).
 	uv run python -m evals.runner --mode live
 
+.PHONY: eval-langsmith
+eval-langsmith: # Same dataset, run as a LangSmith Experiment (needs AWS creds + SPARK_LANGSMITH_*).
+	uv run python -m evals.langsmith_experiment
+
 # =============================================================================
 # Setup
 # =============================================================================
