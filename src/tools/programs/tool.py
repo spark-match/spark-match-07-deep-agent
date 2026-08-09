@@ -22,8 +22,9 @@ def search_programs(
     Usa datos del portal Ponte en Carrera del MINEDU: 6208 combinaciones de
     carrera e institucion, con duracion, ingreso mensual de los egresados,
     costo anual y tasa de admision. Es la unica fuente de cifras concretas
-    del Peru que tienes; `search_careers` describe carreras en general pero
-    no sabe nada de universidades, sueldos ni costos.
+    del Peru que tienes; `search_careers` es esta misma fuente vista por
+    carrera (las 554, con familia y RIASEC) y no sabe nada de universidades,
+    sueldos ni costos.
 
     REGLA OBLIGATORIA al presentar los resultados: cada programa trae una
     lista `estimated`. Los campos que aparecen ahi NO son datos medidos de

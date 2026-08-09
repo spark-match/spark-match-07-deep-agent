@@ -82,8 +82,8 @@ def _format_expected(case: EvalCase) -> str:
         parts.append(f"riasec={case.expected_riasec}")
     if case.expected_careers_count is not None:
         parts.append(f"careers_count={case.expected_careers_count}")
-    if case.expected_career_id:
-        parts.append(f"career_id={case.expected_career_id}")
+    if case.expected_career:
+        parts.append(f"career={case.expected_career}")
     if case.expected_status:
         parts.append(f"status={case.expected_status}")
     if case.expected_no_tool_calls:
@@ -91,6 +91,24 @@ def _format_expected(case: EvalCase) -> str:
     if case.expected_invokes_assessment:
         parts.append("invokes_assessment")
     return ", ".join(parts) or "any reasonable response"
+
+
+# Por debajo de esto una palabra casa con demasiadas carreras del catalogo
+# ("de", "ser", "como") y deja de filtrar nada.
+_MIN_LONGITUD_PALABRA = 6
+
+
+def _palabras_buscables(texto: str) -> list[str]:
+    """Palabras del texto del usuario utilizables como consulta al catalogo.
+
+    Ordenadas de mas larga a mas corta: en una frase, la palabra mas larga
+    suele ser la que lleva el significado ("computacion" antes que "quiero").
+    A igual longitud, alfabetico, para que el resultado no dependa del orden
+    de iteracion de un set.
+    """
+    limpio = re.sub(r"\W+", " ", texto, flags=re.UNICODE)
+    palabras = {p for p in limpio.split() if len(p) >= _MIN_LONGITUD_PALABRA}
+    return sorted(palabras, key=lambda p: (-len(p), p))
 
 
 def _run_mock_case(case: EvalCase) -> str:
@@ -112,6 +130,7 @@ def _run_mock_case(case: EvalCase) -> str:
       ``expected_riasec`` (see ``_mock_evaluate``'s overlap check).
     """
     from src.tools.assessment.handler import evaluate_riasec_profile_handler
+    from src.tools.catalog.handler import search_careers_handler
     from src.tools.matching.handler import calculate_affinity_handler
 
     user_text = " ".join(t.content for t in case.turns if t.role == "user")
@@ -139,6 +158,25 @@ def _run_mock_case(case: EvalCase) -> str:
         # str(): el handler devuelve dict[str, Any], asi que sin esto mypy
         # marca no-any-return sobre la concatenacion.
         return f"Perfil detectado: {riasec}. " + str(result["data"]["interpretation"])
+
+    if case.expected_career:
+        # Esta rama no existia: los casos de planificacion caian al stub de
+        # abajo, que no menciona ninguna carrera. Se sostenia porque el stub
+        # imprime `case.id` y el valor esperado era "cs", subcadena de
+        # "planning_query_cs" -- ver el comentario de `_mock_evaluate`.
+        #
+        # Se busca en el catalogo REAL, y con palabras que escribio el usuario:
+        # preguntarle al handler por `case.expected_career` seria darle la
+        # respuesta y no comprobaria nada. Se prueban las palabras de mayor a
+        # menor longitud y gana la primera que devuelva coincidencias de
+        # verdad, no sugerencias de relleno.
+        for palabra in _palabras_buscables(user_text):
+            resultado = search_careers_handler(query=palabra, limit=10)
+            if not resultado["data"]["fallback_used"]:
+                return f"Carreras del catalogo para '{palabra}':\n" + json.dumps(
+                    resultado["data"]["careers"], ensure_ascii=False
+                )
+        return f"Sin coincidencias en el catalogo para el caso {case.id}"
 
     return f"Respuesta simulada para el caso {case.id}"
 
@@ -197,6 +235,10 @@ def run_eval(mode: str = "mock") -> list[CaseResult]:
                     output=output,
                     expected=expected_str,
                     scenario=scenario,
+                    # Misma ponderacion que la ruta LangSmith. Sin esto las
+                    # dos vias del juez darian numeros distintos para el
+                    # mismo caso y ninguna comparacion valdria.
+                    applicable_dims=case.applicable_dims,
                 )
                 # Sprint 9, task 9.B.2: multi-dimensional judge. The
                 # threshold moved from 0.5 (binary pass/fail) to
@@ -276,7 +318,14 @@ def _mock_evaluate(case: EvalCase, output: str) -> tuple[bool, str]:
             # []``) cannot slip past the mock bar.
             if detected_code != expected_upper:
                 return False, (f"mock FAIL: extracted {detected_code}, expected {expected_upper}")
-            match_count = output.lower().count('"career_id"')
+            # `"career"` y no `"career_id"`: al retirar `data/careers/*.md` el
+            # 2026-08-09 los resultados de `calculate_affinity` dejaron de
+            # llevar id --las 554 carreras del portal se identifican por
+            # nombre-- y este contador se quedaba en cero, tumbando el caso
+            # matching_query_IAS por un cambio de clave y no por una regresion.
+            # La comilla de cierre importa: sin ella `"career_family"` contaria
+            # como una coincidencia mas y el numero saldria al doble.
+            match_count = output.lower().count('"career"')
             if match_count < case.expected_careers_count:
                 return False, (
                     f"mock FAIL: output carries {match_count} matches, "
@@ -300,10 +349,17 @@ def _mock_evaluate(case: EvalCase, output: str) -> tuple[bool, str]:
             f"{len(overlap)}/3 letters with expected {expected_upper}",
         )
 
-    if case.expected_career_id:
-        if case.expected_career_id.lower() in output.lower():
-            return True, f"mock PASS: output mentions career {case.expected_career_id}"
-        return False, f"mock FAIL: output missing career {case.expected_career_id}"
+    if case.expected_career:
+        # Antes esto comparaba contra `expected_career_id`, que en el unico
+        # caso que lo usa valia "cs". Y "cs" esta dentro de "planning_query_cs",
+        # que es el id del caso y sale impreso en la salida simulada: la
+        # comprobacion daba PASS por la subcadena del propio id, sin que la
+        # salida mencionara ninguna carrera. Un test que no podia fallar.
+        # Con el nombre completo ("Ciencias de la Computacion") ya no hay
+        # coincidencia accidental posible.
+        if case.expected_career.lower() in output.lower():
+            return True, f"mock PASS: output mentions career {case.expected_career}"
+        return False, f"mock FAIL: output missing career {case.expected_career}"
 
     if case.expected_no_tool_calls:
         # Sprint 9, task 9.A.4: hardened mock-mode assertion. The previous
