@@ -1,16 +1,40 @@
 """Tests for evals/langsmith_experiment.py (no red network, no AWS)."""
 
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from evals.dataset import EvalCase, EvalTurn
+from evals.dataset import EvalCase, EvalTurn, load_dataset
 
 from evals.langsmith_experiment import (
     _build_examples,
     _example_id,
+    coverage_report,
     ensure_dataset,
+    run_target,
     spark_match_rubric,
 )
+
+
+def _row(*, scored: bool):
+    """Fila al estilo ExperimentResultRow con una nota util."""
+    keys = [{"key": "spark_match_overall", "score": 1.0}] if scored else []
+    return {"run": object(), "example": object(), "evaluation_results": {"results": keys}}
+
+
+def _row_evaluador_reventado():
+    """Lo que escribe `evaluate()` cuando el evaluador lanza: una feedback key
+    con el nombre del evaluador y `extra={"error": True}`, no las 5 del
+    rubric. La fila NO viene vacia, y por eso hay que mirar el `extra`."""
+    return {
+        "run": object(),
+        "example": object(),
+        "evaluation_results": {
+            "results": [
+                {"key": "spark_match_rubric", "comment": "TypeError(...)", "extra": {"error": True}}
+            ]
+        },
+    }
 
 
 class TestBuildExamples:
@@ -82,12 +106,101 @@ class TestExampleIdIsDeterministic:
         assert len(set(ids)) == len(ids), "dos casos del dataset comparten id de Example"
 
 
+class TestRunTargetMatchesProduction:
+    """El target tiene que invocar al agente igual que `src/api/app.py`.
+
+    Si se desvia, el experiment mide un grafo que no es el que sirve la API.
+    Medido el 2026-08-09: faltaba `user_id` en configurable, las tools de
+    langmem levantaban ConfigurationError, la excepcion escapaba de
+    `run_target` y tumbaba el pipeline entero de `evaluate()`.
+    """
+
+    def _invoke(self, case_id="c1"):
+        agent = MagicMock()
+        agent.ainvoke = AsyncMock(return_value={"messages": [SimpleNamespace(content="respuesta")]})
+        with patch("src.agent.factory.create_spark_agent", return_value=agent) as create:
+            out = run_target({"case_id": case_id, "turns": [{"role": "user", "content": "hola"}]})
+        return agent, create, out
+
+    def test_passes_the_four_configurable_keys_production_passes(self):
+        agent, _, _ = self._invoke()
+        configurable = agent.ainvoke.call_args.kwargs["config"]["configurable"]
+        assert set(configurable) == {"thread_id", "user_id", "role", "email"}
+
+    def test_user_id_is_scoped_per_case(self):
+        # Namespaces de langmem distintos: la memoria de un caso no puede
+        # filtrarse al siguiente y falsear el resultado.
+        agent_a, _, _ = self._invoke(case_id="caso_a")
+        agent_b, _, _ = self._invoke(case_id="caso_b")
+        uid = lambda a: a.ainvoke.call_args.kwargs["config"]["configurable"]["user_id"]  # noqa: E731
+        assert uid(agent_a) != uid(agent_b)
+
+    def test_builds_the_agent_with_checkpointer_and_store(self):
+        # Sin store, factory.py:273 apaga las middlewares de memoria y el
+        # caso mide un grafo mas pobre que el de produccion.
+        _, create, _ = self._invoke()
+        assert create.call_args.kwargs["store"] is not None
+        assert create.call_args.kwargs["checkpointer"] is not None
+
+    def test_returns_the_last_message_content(self):
+        _, _, out = self._invoke()
+        assert out == {"output": "respuesta"}
+
+
+class TestCoverageReport:
+    """Un experiment a medias se ve igual de sano que uno completo en la UI:
+    la media se calcula sobre los runs que SI tienen feedback. Medido el
+    2026-08-09 en spark-match-agent-94b49560 -- 90 runs, 39 sin una sola
+    feedback key, y el script salio con codigo 0 anunciando el enlace.
+    """
+
+    def test_no_warning_when_every_run_is_scored(self):
+        scored, warning = coverage_report([_row(scored=True)] * 90, expected=90)
+        assert scored == 90
+        assert warning is None
+
+    def test_warns_when_some_runs_have_no_feedback(self):
+        rows = [_row(scored=True)] * 51 + [_row(scored=False)] * 39
+        scored, warning = coverage_report(rows, expected=90)
+        assert scored == 51
+        assert warning is not None
+        assert "51" in warning
+        assert "90" in warning
+
+    def test_warns_when_the_stream_ends_early(self):
+        # El caso real: el pipeline se corta y ni siquiera devuelve las filas.
+        scored, warning = coverage_report([_row(scored=True)] * 50, expected=90)
+        assert scored == 50
+        assert warning is not None
+
+    def test_empty_run_is_reported_not_silently_ok(self):
+        scored, warning = coverage_report([], expected=90)
+        assert scored == 0
+        assert warning is not None
+
+    def test_failed_evaluator_does_not_count_as_scored(self):
+        # La regresion de mi propio chequeo: en spark-match-agent-80dad4e5
+        # decia 90/90 cuando 6 runs solo llevaban la lapida del evaluador.
+        rows = [_row(scored=True)] * 84 + [_row_evaluador_reventado()] * 6
+        scored, warning = coverage_report(rows, expected=90)
+        assert scored == 84
+        assert warning is not None
+
+
+def _fake_client(*, has_dataset=True, existing_ids=()):
+    """Client de mentira -- sin red. `list_examples` devuelve los Example que
+    el dataset ya tendria, que es lo que decide alta vs actualizacion."""
+    client = MagicMock()
+    client.has_dataset.return_value = has_dataset
+    client.list_examples.return_value = [SimpleNamespace(id=i) for i in existing_ids]
+    return client
+
+
 class TestEnsureDataset:
     """ensure_dataset con un Client de mentira -- sin red."""
 
     def test_creates_dataset_when_missing(self):
-        client = MagicMock()
-        client.has_dataset.return_value = False
+        client = _fake_client(has_dataset=False)
 
         ensure_dataset(client, name="ds", limit=1)
 
@@ -95,40 +208,52 @@ class TestEnsureDataset:
         assert client.create_dataset.call_args.kwargs["dataset_name"] == "ds"
 
     def test_does_not_recreate_existing_dataset(self):
-        # create_examples es upsert (ver docstring del SDK): correr esto de
-        # nuevo sobre un dataset ya creado no debe intentar crearlo otra vez.
-        client = MagicMock()
-        client.has_dataset.return_value = True
+        client = _fake_client()
 
         ensure_dataset(client, name="ds", limit=1)
 
         client.create_dataset.assert_not_called()
-        client.create_examples.assert_called_once()
 
-    def test_limit_truncates_examples_uploaded(self):
-        client = MagicMock()
-        client.has_dataset.return_value = True
+    def test_brand_new_cases_are_created(self):
+        client = _fake_client(existing_ids=())
 
         ensure_dataset(client, name="ds", limit=2)
 
-        uploaded = client.create_examples.call_args.kwargs["examples"]
-        assert len(uploaded) == 2
+        assert len(client.create_examples.call_args.kwargs["examples"]) == 2
+        client.update_examples.assert_not_called()
+
+    def test_cases_already_in_the_dataset_are_updated_not_recreated(self):
+        # La regresion concreta: `create_examples` con un id que ya existe
+        # responde 409 LangSmithConflictError y tumba la corrida ANTES de
+        # arrancar el experiment. Medido el 2026-08-09 -- el segundo intento
+        # de correr 30x3 murio asi, con los 30 ids en el cuerpo del error.
+        cases = load_dataset()[:2]
+        client = _fake_client(existing_ids=[_example_id(c.id) for c in cases])
+
+        ensure_dataset(client, name="ds", limit=2)
+
+        client.create_examples.assert_not_called()
+        assert len(client.update_examples.call_args.kwargs["updates"]) == 2
+
+    def test_mixed_dataset_splits_creates_from_updates(self):
+        cases = load_dataset()[:3]
+        client = _fake_client(existing_ids=[_example_id(cases[0].id)])
+
+        ensure_dataset(client, name="ds", limit=3)
+
+        assert len(client.create_examples.call_args.kwargs["examples"]) == 2
+        assert len(client.update_examples.call_args.kwargs["updates"]) == 1
 
     def test_no_limit_uploads_full_dataset(self):
-        client = MagicMock()
-        client.has_dataset.return_value = True
+        client = _fake_client()
 
         ensure_dataset(client, name="ds", limit=None)
 
         uploaded = client.create_examples.call_args.kwargs["examples"]
-        from evals.dataset import load_dataset
-
         assert len(uploaded) == len(load_dataset())
 
     def test_returns_the_dataset_name_unchanged(self):
-        client = MagicMock()
-        client.has_dataset.return_value = True
-        assert ensure_dataset(client, name="mi-dataset", limit=1) == "mi-dataset"
+        assert ensure_dataset(_fake_client(), name="mi-dataset", limit=1) == "mi-dataset"
 
 
 class TestSparkMatchRubricEvaluator:
