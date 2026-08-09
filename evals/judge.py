@@ -2,7 +2,7 @@
 
 Inspired by Paul Iusztin's workshop pattern (``src/writing/evals/metric.py``):
 a multi-dimensional weighted judge using Claude (Bedrock) -- Haiku 4.5 in
-production (AGENTS.md §8.3 allowlist: ``anthropic.claude-haiku-4-5-
+production (AGENTS.md §8.3 allowlist: ``us.anthropic.claude-haiku-4-5-
 20251001-v1:0``), the same model the agent's intent router uses for
 classification.
 
@@ -53,7 +53,16 @@ RUBRIC_WEIGHTS: dict[str, float] = {
 
 PASSING_SCORE: float = 0.7
 
-DEFAULT_JUDGE_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Con prefijo `us.` -- es un inference profile, no el foundation model a
+# secas. Medido el 2026-08-09 corriendo esto de verdad contra Bedrock: sin
+# el prefijo, ChatBedrock revienta con "ValidationException: Invocation of
+# model ID ... with on-demand throughput isn't supported. Retry your
+# request with the ID or ARN of an inference profile" -- el IAM allowlist de
+# esta cuenta (ver .env.example) solo permite los dos IDs con inference
+# profile. Nada en la suite de tests lo detectaba porque
+# TestJudgeScoring mockea ChatBedrock entero.
+DEFAULT_JUDGE_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 @dataclass
@@ -116,7 +125,7 @@ Respond with ONLY the JSON object, no prose.
 class SparkMatchJudge:
     """Multi-dimensional LLM-as-judge using Claude (Bedrock).
 
-    Default model: ``anthropic.claude-haiku-4-5-20251001-v1:0`` (POC v2
+    Default model: ``us.anthropic.claude-haiku-4-5-20251001-v1:0`` (POC v2
     "leccion 4": 10x cheaper than Sonnet, equivalent eval quality).
     Override via ``model_id=`` for tests or future migrations.
     """
@@ -128,9 +137,15 @@ class SparkMatchJudge:
 
         settings = get_settings()
         self._model_id = model_id or DEFAULT_JUDGE_MODEL_ID
+        # `model=` / `region=` y no `model_id=` / `region_name=`: en
+        # ChatBedrock esos son los NOMBRES DE CAMPO y `model`/`region` sus
+        # alias. Las dos formas construyen exactamente el mismo objeto
+        # (populate_by_name=True), pero mypy solo conoce los alias y marca
+        # call-arg con la otra. Se usa el alias en vez de un type: ignore
+        # porque no hay nada que ignorar -- las dos son validas.
         self._model = ChatBedrock(
-            model_id=self._model_id,
-            region_name=settings.aws_region,
+            model=self._model_id,
+            region=settings.aws_region,
         )
 
     def score(
@@ -159,7 +174,14 @@ class SparkMatchJudge:
         )
 
         response = self._model.invoke(prompt)
-        text = response.content if hasattr(response, "content") else str(response)
+        # `str(...)` y no `.content` a secas: el tipo real es
+        # `str | list[str | dict]` -- un modelo puede devolver bloques de
+        # contenido en vez de texto plano, y ahi `_parse_response` reventaba
+        # con AttributeError al llamar `.strip()` sobre una lista. Con str()
+        # cae en la rama fail-closed (score 0.0 y el texto crudo en `reason`),
+        # que es lo que ya hace src/agent/content_filter.py con su
+        # clasificador.
+        text = str(response.content) if hasattr(response, "content") else str(response)
 
         return self._parse_response(text)
 

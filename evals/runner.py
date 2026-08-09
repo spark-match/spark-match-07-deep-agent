@@ -15,6 +15,11 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from evals.dataset import EvalCase
+    from evals.judge import SparkMatchJudge
 
 
 @dataclass
@@ -70,7 +75,7 @@ def _derive_dimension_scores(text: str) -> dict[str, int]:
     }
 
 
-def _format_expected(case) -> str:
+def _format_expected(case: EvalCase) -> str:
     """Render the expected behavior as a one-line string for the judge."""
     parts: list[str] = []
     if case.expected_riasec:
@@ -88,7 +93,7 @@ def _format_expected(case) -> str:
     return ", ".join(parts) or "any reasonable response"
 
 
-def _run_mock_case(case) -> str:
+def _run_mock_case(case: EvalCase) -> str:
     """Run a case using the pure handlers (no LLM) — never the expected answer.
 
     Useful for CI smoke tests - no AWS credentials needed.
@@ -131,12 +136,14 @@ def _run_mock_case(case) -> str:
             conventional=scores["C"],
         )
         riasec = result["data"]["riasec_code"]
-        return f"Perfil detectado: {riasec}. " + result["data"]["interpretation"]
+        # str(): el handler devuelve dict[str, Any], asi que sin esto mypy
+        # marca no-any-return sobre la concatenacion.
+        return f"Perfil detectado: {riasec}. " + str(result["data"]["interpretation"])
 
     return f"Respuesta simulada para el caso {case.id}"
 
 
-def _run_live_case(case) -> str:
+def _run_live_case(case: EvalCase) -> str:
     """Run a case using the real LangGraph agent. Requires AWS credentials."""
     from src.agent.factory import create_spark_agent
     from src.budget import reset_session_budget
@@ -218,14 +225,14 @@ def run_eval(mode: str = "mock") -> list[CaseResult]:
     return results
 
 
-def _build_judge():
+def _build_judge() -> SparkMatchJudge:
     """Build the LLM judge (lazy import)."""
     from evals.judge import SparkMatchJudge
 
     return SparkMatchJudge()
 
 
-def _mock_evaluate(case, output: str) -> tuple[bool, str]:
+def _mock_evaluate(case: EvalCase, output: str) -> tuple[bool, str]:
     """Heuristic check used in mock mode (no LLM).
 
     Checks:
