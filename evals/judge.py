@@ -2,7 +2,7 @@
 
 Inspired by Paul Iusztin's workshop pattern (``src/writing/evals/metric.py``):
 a multi-dimensional weighted judge using Claude (Bedrock) -- Haiku 4.5 in
-production (AGENTS.md §8.3 allowlist: ``anthropic.claude-haiku-4-5-
+production (AGENTS.md §8.3 allowlist: ``us.anthropic.claude-haiku-4-5-
 20251001-v1:0``), the same model the agent's intent router uses for
 classification.
 
@@ -53,7 +53,16 @@ RUBRIC_WEIGHTS: dict[str, float] = {
 
 PASSING_SCORE: float = 0.7
 
-DEFAULT_JUDGE_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Con prefijo `us.` -- es un inference profile, no el foundation model a
+# secas. Medido el 2026-08-09 corriendo esto de verdad contra Bedrock: sin
+# el prefijo, ChatBedrock revienta con "ValidationException: Invocation of
+# model ID ... with on-demand throughput isn't supported. Retry your
+# request with the ID or ARN of an inference profile" -- el IAM allowlist de
+# esta cuenta (ver .env.example) solo permite los dos IDs con inference
+# profile. Nada en la suite de tests lo detectaba porque
+# TestJudgeScoring mockea ChatBedrock entero.
+DEFAULT_JUDGE_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 @dataclass

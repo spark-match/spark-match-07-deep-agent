@@ -182,7 +182,16 @@ class TestJudgeScoring:
     @patch("langchain_aws.ChatBedrock")
     def test_score_default_model_id_is_haiku_4_5(self, mock_chat_bedrock):
         """POC v2 leccion 4: Haiku 4.5 = 10x cheaper than Sonnet with
-        equivalent eval quality. Verify the allowlist-compliant default."""
+        equivalent eval quality. Verify the allowlist-compliant default.
+
+        El prefijo `us.` no es cosmetico: sin el, ChatBedrock.invoke()
+        revienta con ValidationException porque el foundation model a
+        secas no admite on-demand throughput en esta cuenta (medido el
+        2026-08-09 corriendo el judge de verdad, no mockeado). Este test
+        mockea ChatBedrock, asi que un regreso al id sin prefijo lo
+        dejaria pasar igual -- por eso el string se comprueba exacto en
+        vez de solo el sufijo.
+        """
         mock_response = MagicMock()
         mock_response.content = (
             '{"riasec_accuracy": 1.0, "career_relevance": 1.0, '
@@ -192,7 +201,7 @@ class TestJudgeScoring:
 
         SparkMatchJudge()
         init_kwargs = mock_chat_bedrock.call_args.kwargs
-        assert init_kwargs["model_id"] == "anthropic.claude-haiku-4-5-20251001-v1:0"
+        assert init_kwargs["model_id"] == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 class TestRunnerMock:
