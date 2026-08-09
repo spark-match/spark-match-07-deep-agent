@@ -42,6 +42,28 @@ You are analyzing a vocational guidance conversation to extract a student's prof
 - **Strengths**: skills or abilities they mention or demonstrate
 - **Dislikes**: things they explicitly say they don't enjoy or want to avoid
 - **Career direction**: any career they mention being interested in
+- **Search constraints**: where they want to study, public vs private,
+  university vs institute, and how much they can pay per year
+
+## How to handle search constraints — stricter than the rest
+
+`preferred_region`, `preferred_management`, `preferred_institution_type` and
+`max_annual_budget` are held to a higher bar than everything above, and the
+reason is worth knowing: the agent turns them into **hard filters**. A wrong
+RIASEC score produces an odd recommendation the student can argue with. A wrong
+budget produces options that are never shown at all — an error nobody can see.
+
+So, for these four fields only:
+
+- Set them **only from an explicit statement**, never from an inference.
+  "Vivo en Puno" is not "quiero estudiar en Puno": leave the region None.
+- **Never turn a vague phrase into a number.** "No tengo mucha plata", "algo
+  barato" and "depende de la beca" are all None, not 3000. Leave it None and
+  let the agent ask for a figure.
+- "Me da igual", "cualquiera" or "las dos" mean **no preference**: leave the
+  field None. None means "we don't know / doesn't matter", and the agent's
+  tools already treat a missing filter as no filter.
+- If the student changes their mind, overwrite with the latest.
 
 ## How to score RIASEC
 
