@@ -1,9 +1,10 @@
 """MCP server exposing the Spark Match agent's tools (Sprint 8, task 8.5).
 
 Scope decision: exposes only. This module lets other MCP clients (Claude
-Desktop, other agents, etc.) call this project's 5 tools
+Desktop, other agents, etc.) call this project's 6 tools
 (``evaluate_riasec_profile``, ``search_careers``, ``search_programs``,
-``calculate_affinity``, ``web_search``) over the Model Context Protocol.
+``calculate_affinity``, ``recommend_programs``, ``web_search``) over the
+Model Context Protocol.
 It does **not** consume
 external MCP servers -- that's the other half of the roadmap's task 8.5
 and was explicitly scoped out for this PR (see ``.mcp.json`` / the PR
@@ -35,6 +36,12 @@ from src.tools.assessment.handler import evaluate_riasec_profile_handler
 from src.tools.catalog.handler import search_careers_handler
 from src.tools.matching.handler import calculate_affinity_handler
 from src.tools.programs.handler import DEFAULT_LIMIT, search_programs_handler
+from src.tools.recommendation.handler import (
+    DEFAULT_TOP_N as RECOMMEND_DEFAULT_TOP_N,
+)
+from src.tools.recommendation.handler import (
+    recommend_programs_handler,
+)
 from src.tools.web_search.handler import web_search_handler
 
 mcp_server: MCPServer = MCPServer(
@@ -97,11 +104,14 @@ def evaluate_riasec_profile(
 
 @mcp_server.tool()
 def search_careers(query: str, field: str | None = None) -> dict[str, Any]:
-    """Search the career catalog by free-text query and optional field filter.
+    """Search the 554 careers of the MINEDU catalog, without institutions.
+
+    Same source as ``search_programs``, seen per career: name, career family
+    and RIASEC profile, no economics. Use ``search_programs`` for figures.
 
     Args:
-        query: Free-text search query (career name, keyword, etc.).
-        field: Optional field filter (e.g. "Tecnología", "Salud").
+        query: Free-text search query (career name or family).
+        field: Optional career-family filter (e.g. "Teatro", "Educación").
     """
     return _unwrap_or_raise(search_careers_handler(query=query, field=field))
 
@@ -153,6 +163,43 @@ def calculate_affinity(riasec_code: str, top_n: int = 5) -> dict[str, Any]:
         top_n: Maximum number of ranked careers to return (default 5).
     """
     return _unwrap_or_raise(calculate_affinity_handler(riasec_code=riasec_code, top_n=top_n))
+
+
+@mcp_server.tool()
+def recommend_programs(
+    riasec_code: str,
+    region: str | None = None,
+    management_type: str | None = None,
+    institution_type: str | None = None,
+    max_annual_cost: float | None = None,
+    top_n: int = RECOMMEND_DEFAULT_TOP_N,
+) -> dict[str, Any]:
+    """Top-N of real programs for a RIASEC profile, one per career.
+
+    Combines vocational affinity with the economics of each program. Filters
+    EXCLUDE rather than subtract points: asking for Arequipa returns nothing
+    from outside Arequipa. ``match_score`` is this system's own figure, not a
+    MINEDU one -- ``score_breakdown`` says how much of it is affinity and how
+    much economics.
+
+    Args:
+        riasec_code: 3-letter RIASEC code (e.g. "IRC").
+        region: Peruvian department (e.g. "Arequipa").
+        management_type: "publica" or "privada"; "ambas" for no filter.
+        institution_type: "universidad" or "instituto"; "ambos" for no filter.
+        max_annual_cost: Maximum annual cost in soles.
+        top_n: How many recommendations to return (capped at 10).
+    """
+    return _unwrap_or_raise(
+        recommend_programs_handler(
+            riasec_code=riasec_code,
+            region=region,
+            management_type=management_type,
+            institution_type=institution_type,
+            max_annual_cost=max_annual_cost,
+            top_n=top_n,
+        )
+    )
 
 
 @mcp_server.tool()
