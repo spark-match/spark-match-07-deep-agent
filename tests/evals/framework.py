@@ -191,6 +191,11 @@ class TestJudgeScoring:
         mockea ChatBedrock, asi que un regreso al id sin prefijo lo
         dejaria pasar igual -- por eso el string se comprueba exacto en
         vez de solo el sufijo.
+
+        Se lee el kwarg con un fallback `model` / `model_id`: los dos son
+        validos en ChatBedrock (uno es el nombre de campo, el otro su
+        alias) y cual se use es un detalle de implementacion. Lo que este
+        test protege es el VALOR, no como se llama el parametro.
         """
         mock_response = MagicMock()
         mock_response.content = (
@@ -201,7 +206,8 @@ class TestJudgeScoring:
 
         SparkMatchJudge()
         init_kwargs = mock_chat_bedrock.call_args.kwargs
-        assert init_kwargs["model_id"] == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        passed_model = init_kwargs.get("model", init_kwargs.get("model_id"))
+        assert passed_model == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 class TestRunnerMock:

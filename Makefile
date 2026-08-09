@@ -63,8 +63,8 @@ lint-check: # Check linting without fixing.
 	uv run ruff check $(QA_FOLDERS)
 
 .PHONY: typecheck
-typecheck: # Run mypy strict type checker.
-	uv run mypy src/
+typecheck: # Run mypy strict type checker (src/ + evals/; tests/ queda fuera a proposito).
+	uv run mypy src/ evals/
 
 .PHONY: qa
 qa: format-check lint-check typecheck # Run all QA checks (no fix).
