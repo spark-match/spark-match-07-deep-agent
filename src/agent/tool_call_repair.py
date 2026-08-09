@@ -217,12 +217,99 @@ def _gaps(messages: list[AnyMessage]) -> list[tuple[int, list[str]]]:
     return found
 
 
+def _payload_orphan_ids(messages: list[AnyMessage]) -> list[str] | None:
+    """Ids sin `tool_result` segun el conversor de langchain_aws.
+
+    Esta es la fuente de la verdad: en vez de reimplementar como se traduce
+    un mensaje a la peticion, se llama a la MISMA funcion por la que pasa la
+    peticion de verdad y se aplica la regla de Anthropic sobre el resultado.
+    Tres intentos de leer los mensajes "a mano" dieron el historial por sano
+    mientras la API lo rechazaba; esto no puede discrepar de la API porque
+    mira lo mismo que ella.
+
+    Devuelve ``None`` si el conversor no esta disponible -- es una funcion
+    privada de una dependencia y puede desaparecer entre versiones. En ese
+    caso el llamador se queda con la lectura por tipos de bloque, que cubre
+    los casos conocidos.
+    """
+    try:
+        from langchain_aws.chat_models.bedrock import _format_anthropic_messages
+    except ImportError:  # pragma: no cover - solo si cambia la libreria
+        return None
+
+    try:
+        # Copia profunda: el conversor reescribe los mensajes que recibe.
+        _system, payload = _format_anthropic_messages([m.model_copy(deep=True) for m in messages])
+    except Exception:
+        # Un conversor que falla no puede tumbar el turno: se cae a la
+        # lectura por tipos de bloque, que cubre los casos conocidos.
+        logger.warning("tool_call_repair: no se pudo convertir el historial para revisarlo")
+        return None
+
+    orphans: list[str] = []
+    for index, entry in enumerate(payload):
+        content = entry.get("content")
+        if not isinstance(content, list):
+            continue
+        used = [
+            str(block["id"])
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id")
+        ]
+        if not used:
+            continue
+
+        following = payload[index + 1] if index + 1 < len(payload) else None
+        answered: set[str] = set()
+        if following is not None and isinstance(following.get("content"), list):
+            answered = {
+                str(block["tool_use_id"])
+                for block in following["content"]
+                if isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and block.get("tool_use_id")
+            }
+        orphans.extend(call_id for call_id in used if call_id not in answered)
+    return orphans
+
+
+def _mentions(message: AnyMessage, call_id: str) -> bool:
+    """Si este mensaje nombra ese id de llamada, en cualquier representacion.
+
+    Por id y no por tipo de bloque a proposito. El id es lo unico que se
+    puede reconocer sin saber de antemano como decidio langchain empaquetar
+    la llamada esta vez -- que es justo lo que no supimos tres veces.
+    """
+    if isinstance(message, AIMessage) and any(
+        str(call.get("id")) == call_id for call in message.tool_calls
+    ):
+        return True
+    for block in _content_blocks(message):
+        if str(block.get("id")) == call_id:
+            return True
+        value = block.get("value")
+        if isinstance(value, dict) and str(value.get("id")) == call_id:
+            return True
+    return False
+
+
+def _insertion_point(messages: list[AnyMessage], owner: int) -> int:
+    """Donde va el resultado: detras del bloque de respuestas que ya tenga."""
+    index = owner + 1
+    while index < len(messages) and _tool_result_ids(messages[index]):
+        index += 1
+    return index
+
+
 def unpaired_tool_use_ids(messages: list[AnyMessage]) -> list[str]:
     """Ids que la API va a rechazar: `tool_use` sin su `tool_result` detras.
 
-    Es la misma comprobacion que hace Anthropic, y se usa para verificar que
-    la reparacion sirvio de algo antes de mandar la peticion.
+    Pregunta primero al conversor real. Solo si no esta disponible cae en la
+    lectura por tipos de bloque.
     """
+    from_payload = _payload_orphan_ids(messages)
+    if from_payload is not None:
+        return from_payload
     return [call_id for _, ids in _gaps(messages) for call_id in ids]
 
 
@@ -231,15 +318,63 @@ def repair_tool_calls(messages: list[AnyMessage]) -> list[AnyMessage]:
 
     La lista de entrada no se modifica.
     """
+    orphans = unpaired_tool_use_ids(messages)
+    if not orphans:
+        return list(messages)
+
+    # Se agrupan por el mensaje que hizo la llamada, y se insertan de atras
+    # hacia delante: hacerlo por delante desplazaria los indices restantes.
+    by_owner: dict[int, list[str]] = {}
+    for call_id in orphans:
+        owner = next(
+            (index for index, message in enumerate(messages) if _mentions(message, call_id)),
+            None,
+        )
+        if owner is None:
+            # Un id que la peticion manda y que ningun mensaje nombra no se
+            # puede colocar en ningun sitio. Decirlo es mejor que insertarlo
+            # al tuntun y cambiar un error por otro.
+            logger.error(
+                "tool_call_repair: la llamada %s no aparece en ningun mensaje; no se puede reponer",
+                call_id,
+            )
+            continue
+        by_owner.setdefault(owner, []).append(call_id)
+
     repaired = list(messages)
-    # De atras hacia delante: insertar por delante desplazaria los indices
-    # que quedan por usar.
-    for insert_at, missing in reversed(_gaps(messages)):
-        repaired[insert_at:insert_at] = [
+    for owner in sorted(by_owner, reverse=True):
+        at = _insertion_point(messages, owner)
+        repaired[at:at] = [
             ToolMessage(content=ORPHAN_TOOL_RESULT, tool_call_id=call_id, status="error")
-            for call_id in missing
+            for call_id in by_owner[owner]
         ]
     return repaired
+
+
+def _fingerprint(messages: list[AnyMessage]) -> str:
+    """La FORMA del historial, para diagnosticar sin volcar la conversacion.
+
+    Solo tipos de mensaje, tipos de bloque e ids de llamada. Nada del texto:
+    ahi va lo que escribe el estudiante, y un log no es sitio para eso.
+    """
+    entries: list[str] = []
+    for index, message in enumerate(messages):
+        entry = f"{index}:{type(message).__name__}"
+        if isinstance(message, AIMessage):
+            uses = _tool_use_ids(message)
+            if uses:
+                entry += f" use={'|'.join(uses)}"
+            invalid = [str(call["id"]) for call in message.invalid_tool_calls if call.get("id")]
+            if invalid:
+                entry += f" invalid={'|'.join(invalid)}"
+        results = _tool_result_ids(message)
+        if results:
+            entry += f" result={'|'.join(sorted(results))}"
+        blocks = [str(block.get("type")) for block in _content_blocks(message)]
+        if blocks:
+            entry += f" blocks={'+'.join(blocks)}"
+        entries.append(entry)
+    return " ; ".join(entries)
 
 
 class ToolCallRepairMiddleware(AgentMiddleware[Any, Any, Any]):
@@ -310,7 +445,19 @@ class ToolCallRepairMiddleware(AgentMiddleware[Any, Any, Any]):
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
         """Contraparte async. La produccion (ag_ui_langgraph) usa solo esta."""
-        return await handler(self._repair(request))
+        repaired = self._repair(request)
+        try:
+            return await handler(repaired)
+        except Exception:
+            # Si la peticion se rechaza igual, que el log traiga la forma del
+            # historial. Sin esto, "la reparacion no vio nada" y "no habia
+            # nada que ver" se leen igual, y averiguar cual de las dos era
+            # costo tres despliegues.
+            logger.error(
+                "tool_call_repair: la llamada fallo con este historial: %s",
+                _fingerprint(list(repaired.messages)),
+            )
+            raise
 
 
 __all__ = [

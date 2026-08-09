@@ -113,20 +113,23 @@ class TestRepairToolCalls:
         assert isinstance(repaired[2], ToolMessage)
         assert isinstance(repaired[5], ToolMessage)
 
-    def test_a_result_that_is_not_contiguous_does_not_count_as_answered(self):
-        # Este es el matiz que hace que no baste con buscar el id por todo el
-        # historial: el ToolMessage existe, pero colocado donde la API no lo
-        # acepta. Sin reponerlo, el historial seguiria siendo invalido.
+    def test_a_message_in_between_does_not_break_the_pairing(self):
+        # Contraintuitivo, y por eso esta escrito: `_merge_messages` funde los
+        # mensajes de usuario seguidos en uno solo y coloca el tool_result al
+        # frente, asi que esto llega a la API como
+        #   assistant[tool_use tc-1] + user[tool_result tc-1, text]
+        # y es valido. La regla "el resultado tiene que ir en el mensaje
+        # inmediatamente siguiente" que aplicaba este modulo era mas estricta
+        # que la real, y aqui habria insertado un tool_result DUPLICADO --
+        # cambiando un payload valido por uno invalido.
         messages: list[AnyMessage] = [
             AIMessage(content="", tool_calls=[_call("tc-1")]),
             HumanMessage(content="perdona, otra cosa"),
             ToolMessage(content="[]", tool_call_id="tc-1"),
         ]
 
-        repaired = repair_tool_calls(messages)
-
-        assert isinstance(repaired[1], ToolMessage)
-        assert repaired[1].content == ORPHAN_TOOL_RESULT
+        assert _payload_orphans(_anthropic_payload(messages)) == []
+        assert repair_tool_calls(messages) == messages
 
     def test_survives_a_tool_call_with_no_id(self):
         messages: list[AnyMessage] = [
@@ -320,6 +323,33 @@ class TestAgainstTheRealBedrockConverter:
         ]
 
         assert unpaired_tool_use_ids(messages) == ["toolu_Y"]
+        assert _payload_orphans(_anthropic_payload(repair_tool_calls(messages))) == []
+
+    def test_a_shape_this_module_never_anticipated_still_gets_repaired(self):
+        # La razon de emparejar por ID y no por tipo de bloque: el conversor
+        # deja pasar `non_standard` verbatim, asi que un tool_use puede
+        # llegar a la peticion dentro de una envoltura que este modulo no
+        # tiene por que conocer. Mientras el id aparezca en el mensaje, se
+        # sabe donde va su resultado.
+        messages: list[AnyMessage] = [
+            AIMessage(
+                content=[
+                    {
+                        "type": "non_standard",
+                        "value": {
+                            "type": "tool_use",
+                            "id": "toolu_raro",
+                            "name": "web_search",
+                            "input": {},
+                        },
+                    }
+                ],
+                tool_calls=[],
+                response_metadata={"output_version": "v1", "model_provider": "bedrock"},
+            )
+        ]
+
+        assert _payload_orphans(_anthropic_payload(messages)) == ["toolu_raro"]
         assert _payload_orphans(_anthropic_payload(repair_tool_calls(messages))) == []
 
     def test_a_healthy_conversation_survives_the_round_trip(self):
