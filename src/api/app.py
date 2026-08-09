@@ -14,6 +14,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from src.agent import create_spark_agent
+from src.api.profile import router as profile_router
 from src.api.rate_limit import limiter
 from src.api.security_headers import SecurityHeadersMiddleware
 from src.api.sse import with_heartbeat
@@ -38,6 +39,19 @@ logger = logging.getLogger(__name__)
 # Path under which the AG-UI streaming endpoint is mounted. Frontend
 # (04-frontend) connects here over SSE.
 AG_UI_PATH = "/ag-ui"
+
+# Concatenacion y no f-string, a proposito. Sonar (python:S8411) busca `{...}`
+# en la ruta de un endpoint para saber que path parameters declara, y lo hace
+# sobre el TEXTO: con `f"{AG_UI_PATH}/health"` ve las llaves de la
+# interpolacion y reclama un parametro llamado "AG_UI_PATH" que faltaria en la
+# firma de la funcion. En ejecucion eso vale "/ag-ui/health" y no hay parametro
+# ninguno, asi que el aviso es falso -- pero llegaba al Quality Gate como bug.
+#
+# Sacar la f-string a una constante no bastaba: Sonar propaga el valor y se
+# queda con el texto original, llaves incluidas. Concatenando no hay llaves en
+# ningun sitio y la ruta se sigue derivando de AG_UI_PATH, que es lo que
+# importa para que las dos no se separen nunca.
+AG_UI_HEALTH_PATH = AG_UI_PATH + "/health"
 
 # Lo que se le manda al navegador cuando el turno revienta a mitad del
 # stream. Fijo y sin el detalle de la excepcion a proposito: ese detalle
@@ -187,7 +201,7 @@ def create_app() -> FastAPI:
     # closure defined here).
     app.add_api_route(AG_UI_PATH, ag_ui_endpoint, methods=["POST"])
 
-    @app.get(f"{AG_UI_PATH}/health")
+    @app.get(AG_UI_HEALTH_PATH)
     async def ag_ui_health() -> dict[str, str]:
         """Health check at /ag-ui/health (mirrors the workshop convention)."""
         return {"status": "ok", "agent": settings.agent_name}
@@ -195,6 +209,11 @@ def create_app() -> FastAPI:
     # Session management (list / read / delete). Streaming a turn is only
     # part of a chat product; see src/api/threads.py.
     app.include_router(threads_router)
+    # Leer el perfil y corregir sus cuatro preferencias de busqueda. Hasta
+    # ahora el perfil solo tenia entrada (el extractor conversacional) y
+    # ninguna salida: el estudiante no podia ver ni arreglar lo que el sistema
+    # creia saber de el. Ver src/api/profile.py.
+    app.include_router(profile_router)
 
     return app
 
