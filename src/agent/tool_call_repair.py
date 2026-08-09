@@ -42,23 +42,34 @@ Dos decisiones que no son obvias:
 Donde vive una llamada, que no es un solo sitio
 ------------------------------------------------
 
-La primera version de este modulo miraba solo ``message.tool_calls`` y **no
-arreglo nada en produccion**: el turno seguia fallando y el middleware ni
-siquiera registraba haber reparado algo. El motivo esta en
-``langchain_aws/chat_models/bedrock.py`` (lineas 611-637): el payload de
-Bedrock se construye desde los DOS sitios donde puede vivir una llamada, la
-lista ``tool_calls`` y los bloques ``{"type": "tool_use"}`` dentro de
-``content``. Cuando un bloque de ``content`` trae un id que ``tool_calls``
-no menciona, se manda tal cual::
+Esto costo dos despliegues fallidos, y merece la pena contar por que.
 
-    else:
-        tool_blocks.append({k: v for k, v in item.items() if ...})
+La primera version miraba solo ``message.tool_calls``. La segunda anadio los
+bloques ``{"type": "tool_use"}`` de ``content``. Las dos siguieron dando el
+historial por sano mientras la API lo rechazaba, y las dos pasaron sus tests
+-- porque los tests validaban MI lectura de los mensajes, no la peticion que
+sale hacia Bedrock.
 
-Y un turno cortado a mitad deja exactamente eso: el bloque en ``content``
-consolidado y ``tool_calls`` sin consolidar. Asi que aqui se mira la union
-de ambos, que es lo que la API va a ver de verdad. Misma idea del lado de
-las respuestas: un ``tool_result`` puede llegar como ``ToolMessage`` o como
-bloque dentro de ``content``.
+La llamada no vive en un sitio, vive en cuatro. ``_format_anthropic_messages``
+reescribe el contenido de cada ``AIMessage`` con ``output_version="v1"``
+llamando a ``_convert_from_v1_to_anthropic``
+(``langchain_aws/chat_models/bedrock.py``), y ahi tres tipos de bloque
+distintos acaban siendo un ``tool_use``: ``tool_use``, ``tool_call`` y
+``tool_call_chunk``. El ultimo es justo lo que deja un stream cortado a
+mitad: el trozo llego, ``tool_calls`` nunca se consolido. Invisible desde
+``tool_calls``, invisible desde ``tool_use``, y perfectamente visible para la
+API.
+
+De ahi las dos defensas que tiene ahora este modulo:
+
+- ``_TOOL_USE_BLOCK_TYPES`` sale de leer ese conversor, no de suponer.
+- Los tests comprueban el payload YA CONVERTIDO, llamando al conversor de
+  langchain_aws en vez de reimplementar sus reglas. Un test que valida mi
+  lectura de los mensajes es exactamente el que dejo pasar los dos fallos.
+
+Y por si aparece una quinta representacion: si un bloque tiene ``id`` y pinta
+de llamada pero este modulo no sabe leerlo, se registra por log. "No hay nada
+que reparar" y "no supe verlo" no pueden volver a leerse igual.
 """
 
 import logging
@@ -80,6 +91,28 @@ ORPHAN_TOOL_RESULT = (
 )
 
 
+# Tipos de bloque de `content` que acaban siendo un `tool_use` en la peticion.
+# No es una lista puesta a ojo: es exactamente lo que traduce
+# `_convert_from_v1_to_anthropic` en langchain_aws/chat_models/bedrock.py,
+# que reescribe el contenido de cada AIMessage con output_version="v1" antes
+# de mandarlo.
+#
+#   "tool_use"        ya viene en formato Anthropic y pasa tal cual
+#   "tool_call"       -> {"type": "tool_use", "id": block["id"], ...}
+#   "tool_call_chunk" -> {"type": "tool_use", "id": block["id"], ...}
+#
+# El tercero es el que importa aqui: un stream cortado a mitad deja trozos
+# `tool_call_chunk` que nunca se consolidaron en `tool_calls`. Mirar solo
+# "tool_use" (y antes, solo `tool_calls`) es lo que hizo que dos intentos de
+# arreglar esto dieran el historial por sano mientras la API lo rechazaba.
+_TOOL_USE_BLOCK_TYPES = frozenset({"tool_use", "tool_call", "tool_call_chunk"})
+
+# Claves que delatan una llamada en un bloque que no reconocemos. Solo para
+# avisar por log: mejor una pista de que hay una representacion nueva que otra
+# ronda de despliegues a ciegas.
+_CALL_LIKE_KEYS = frozenset({"name", "args", "input"})
+
+
 def _content_blocks(message: AnyMessage) -> list[dict[str, Any]]:
     """Los bloques de `content`, o nada si el contenido es texto plano."""
     content = message.content
@@ -88,23 +121,51 @@ def _content_blocks(message: AnyMessage) -> list[dict[str, Any]]:
     return [block for block in content if isinstance(block, dict)]
 
 
+def _block_tool_use_id(block: dict[str, Any]) -> str | None:
+    """El id de llamada que este bloque va a mandar, si manda alguno."""
+    block_type = block.get("type")
+    if block_type in _TOOL_USE_BLOCK_TYPES:
+        block_id = block.get("id")
+        return str(block_id) if block_id else None
+    # `non_standard` viaja verbatim a la peticion (`new_content.append(
+    # block["value"])` en el mismo conversor), asi que su contenido puede ser
+    # un tool_use ya formado.
+    if block_type == "non_standard":
+        value = block.get("value")
+        if isinstance(value, dict) and value.get("type") == "tool_use" and value.get("id"):
+            return str(value["id"])
+    return None
+
+
 def _tool_use_ids(message: AIMessage) -> list[str]:
     """Ids que este mensaje va a mandar como `tool_use`, mire donde mire la API.
 
-    Union de `tool_calls` y de los bloques `tool_use` de `content`. Mirar
-    solo `tool_calls` fue el motivo exacto de que la primera version de esto
-    no arreglara nada: el bloque huerfano vivia en `content`.
+    Union de `tool_calls` y de los bloques de `content` que el conversor de
+    langchain_aws convierte en `tool_use`.
     """
     ids = [str(call["id"]) for call in message.tool_calls if call.get("id")]
     seen = set(ids)
     for block in _content_blocks(message):
-        block_id = block.get("id")
-        if block.get("type") != "tool_use" or not block_id:
-            continue
-        if str(block_id) not in seen:
-            seen.add(str(block_id))
-            ids.append(str(block_id))
+        block_id = _block_tool_use_id(block)
+        if block_id and block_id not in seen:
+            seen.add(block_id)
+            ids.append(block_id)
     return ids
+
+
+def _unrecognised_call_blocks(message: AIMessage) -> list[str]:
+    """Tipos de bloque con pinta de llamada que este modulo no sabe leer.
+
+    Existe porque el modo de fallo de esto es silencioso: si una version nueva
+    de langchain empieza a representar las llamadas de otra forma, la
+    reparacion vuelve a dar el historial por sano y el unico sintoma es una
+    ValidationException sin pista. Mejor que lo diga el log.
+    """
+    return [
+        str(block.get("type"))
+        for block in _content_blocks(message)
+        if _block_tool_use_id(block) is None and block.get("id") and _CALL_LIKE_KEYS & block.keys()
+    ]
 
 
 def _tool_result_ids(message: AnyMessage) -> set[str]:
@@ -192,6 +253,20 @@ class ToolCallRepairMiddleware(AgentMiddleware[Any, Any, Any]):
 
     def _repair(self, request: ModelRequest[Any]) -> ModelRequest[Any]:
         messages = list(request.messages)
+
+        # Antes de decidir que no hay nada que hacer: avisar si aparece una
+        # forma de representar una llamada que este modulo no conoce. Sin
+        # esto, "no hay nada que reparar" y "no supe verlo" se leen igual.
+        for message in messages:
+            if not isinstance(message, AIMessage):
+                continue
+            unknown = _unrecognised_call_blocks(message)
+            if unknown:
+                logger.warning(
+                    "tool_call_repair: bloques con pinta de llamada sin leer: %s",
+                    ", ".join(sorted(set(unknown))),
+                )
+
         missing = unpaired_tool_use_ids(messages)
         if not missing:
             return request

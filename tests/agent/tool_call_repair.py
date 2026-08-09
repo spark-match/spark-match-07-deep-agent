@@ -12,6 +12,7 @@ identico, siempre en el mismo indice::
 from typing import Any
 
 from langchain.agents.middleware import ModelRequest
+from langchain_aws.chat_models.bedrock import _format_anthropic_messages
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
 from src.agent.tool_call_repair import (
@@ -224,6 +225,115 @@ class TestACallThatOnlyExistsInsideContent:
         assert unpaired_tool_use_ids(messages) == []
 
 
+def _anthropic_payload(messages: list[AnyMessage]) -> list[dict[str, Any]]:
+    """Los mensajes tal como los va a recibir la API, por el conversor de verdad.
+
+    Se usa `_format_anthropic_messages` de langchain_aws en vez de una copia
+    nuestra de sus reglas. Es la unica forma de comprobar lo que importa: dos
+    intentos de arreglar esto pasaron sus tests y fallaron en produccion
+    justamente porque los tests validaban mi lectura de los mensajes, no la
+    peticion que sale hacia Bedrock.
+    """
+    _system, formatted = _format_anthropic_messages([m.model_copy(deep=True) for m in messages])
+    return formatted
+
+
+def _payload_orphans(payload: list[dict[str, Any]]) -> list[str]:
+    """La misma regla que aplica Anthropic, sobre el payload ya convertido."""
+    orphans: list[str] = []
+    for index, message in enumerate(payload):
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        used = [
+            block["id"]
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "tool_use"
+        ]
+        if not used:
+            continue
+
+        following = payload[index + 1] if index + 1 < len(payload) else None
+        answered: set[str] = set()
+        if following is not None and isinstance(following.get("content"), list):
+            answered = {
+                block.get("tool_use_id")
+                for block in following["content"]
+                if isinstance(block, dict) and block.get("type") == "tool_result"
+            }
+        orphans.extend(call_id for call_id in used if call_id not in answered)
+    return orphans
+
+
+class TestAgainstTheRealBedrockConverter:
+    """Contra la peticion que sale, no contra mi lectura de los mensajes.
+
+    El bloque `tool_call_chunk` es lo que deja un stream cortado a mitad: el
+    trozo llego, `tool_calls` nunca se consolido.
+    `_convert_from_v1_to_anthropic` lo convierte igualmente en un `tool_use`,
+    asi que la API ve una llamada que `tool_calls` no menciona.
+    """
+
+    @staticmethod
+    def _cut_stream() -> list[AnyMessage]:
+        return [
+            HumanMessage(content="cuando abren las inscripciones de beca 18"),
+            AIMessage(
+                content=[
+                    {"type": "text", "text": "Dejame buscar."},
+                    {
+                        "type": "tool_call_chunk",
+                        "name": "web_search",
+                        "args": '{"query": "beca 18"}',
+                        "id": "toolu_bdrk_013v2T9o6kDS2QarNA7DVroF",
+                        "index": 0,
+                    },
+                ],
+                tool_calls=[],
+                response_metadata={"output_version": "v1", "model_provider": "bedrock"},
+            ),
+        ]
+
+    def test_a_cut_stream_produces_a_payload_the_api_rejects(self):
+        # Sin esto el test de abajo seria vacuo: primero hay que demostrar
+        # que el payload esta roto de verdad.
+        assert _payload_orphans(_anthropic_payload(self._cut_stream())) == [
+            "toolu_bdrk_013v2T9o6kDS2QarNA7DVroF"
+        ]
+
+    def test_and_after_repairing_it_the_payload_is_valid(self):
+        repaired = repair_tool_calls(self._cut_stream())
+
+        assert _payload_orphans(_anthropic_payload(repaired)) == []
+
+    def test_the_repair_sees_it_where_the_two_previous_versions_did_not(self):
+        assert unpaired_tool_use_ids(self._cut_stream()) == ["toolu_bdrk_013v2T9o6kDS2QarNA7DVroF"]
+
+    def test_a_consolidated_tool_call_block_counts_too(self):
+        # El otro tipo que el conversor traduce a tool_use.
+        messages: list[AnyMessage] = [
+            AIMessage(
+                content=[{"type": "tool_call", "name": "web_search", "args": {}, "id": "toolu_Y"}],
+                tool_calls=[],
+                response_metadata={"output_version": "v1", "model_provider": "bedrock"},
+            )
+        ]
+
+        assert unpaired_tool_use_ids(messages) == ["toolu_Y"]
+        assert _payload_orphans(_anthropic_payload(repair_tool_calls(messages))) == []
+
+    def test_a_healthy_conversation_survives_the_round_trip(self):
+        messages: list[AnyMessage] = [
+            HumanMessage(content="hola"),
+            AIMessage(content="", tool_calls=[_call("tc-1")]),
+            ToolMessage(content="[]", tool_call_id="tc-1"),
+            AIMessage(content="listo"),
+        ]
+
+        assert _payload_orphans(_anthropic_payload(messages)) == []
+        assert repair_tool_calls(messages) == messages
+
+
 class TestToolCallRepairMiddleware:
     """El middleware, por el hook que usa produccion (async)."""
 
@@ -279,6 +389,46 @@ class TestToolCallRepairMiddleware:
 
         assert "tool_call_repair" in caplog.text
         assert "tc-1" in caplog.text
+
+    async def test_warns_about_a_call_shaped_block_it_cannot_read(self, caplog):
+        # El modo de fallo de esto es silencioso: si langchain empieza a
+        # representar las llamadas de otra forma, "no hay nada que reparar" y
+        # "no supe verlo" se leen igual en el log. Costo dos despliegues.
+        messages: list[AnyMessage] = [
+            AIMessage(
+                content=[
+                    {
+                        "type": "formato_del_futuro",
+                        "id": "toolu_Z",
+                        "name": "web_search",
+                        "args": {},
+                    }
+                ]
+            )
+        ]
+
+        async def handler(_request: ModelRequest[Any]) -> str:
+            return "ok"
+
+        with caplog.at_level("WARNING"):
+            await ToolCallRepairMiddleware().awrap_model_call(self._request(messages), handler)
+
+        assert "formato_del_futuro" in caplog.text
+
+    async def test_does_not_cry_wolf_over_ordinary_blocks(self, caplog):
+        messages: list[AnyMessage] = [
+            AIMessage(content=[{"type": "text", "text": "hola"}]),
+            AIMessage(content="", tool_calls=[_call("tc-1")]),
+            ToolMessage(content="[]", tool_call_id="tc-1"),
+        ]
+
+        async def handler(_request: ModelRequest[Any]) -> str:
+            return "ok"
+
+        with caplog.at_level("WARNING"):
+            await ToolCallRepairMiddleware().awrap_model_call(self._request(messages), handler)
+
+        assert caplog.text == ""
 
     def test_the_sync_hook_repairs_too(self):
         # ag_ui_langgraph solo usa el async, pero una invocacion directa del
