@@ -130,6 +130,26 @@ class TestLanguageRule:
             )
 
 
+class TestCareerToolRouting:
+    """Medido en dev el 2026-08-09: para "que carreras tienes", el
+    coordinador elegia `search_careers` (20 fichas curadas) y reintentaba
+    seis consultas distintas contra ese mismo catalogo pequeno en vez de
+    usar `search_programs` (6208 combinaciones reales). La regla de
+    honestidad de cifras mencionaba de pasada cual era la fuente buena,
+    pero no decia explicitamente que herramienta elegir primero.
+    """
+
+    def test_coordinator_says_which_tool_to_prefer(self):
+        assert "search_programs" in SYSTEM_PROMPT
+        assert "20 fichas" in SYSTEM_PROMPT
+
+    def test_coordinator_tells_the_model_not_to_retry_the_wrong_tool(self):
+        # El sintoma real no era elegir mal una vez: era reformular la
+        # misma consulta contra la misma herramienta equivocada varias
+        # veces seguidas.
+        assert "no se arregla reformulando" in SYSTEM_PROMPT
+
+
 class TestParsePromptFile:
     """Edge cases for the frontmatter parser."""
 
