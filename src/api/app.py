@@ -14,6 +14,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from src.agent import create_spark_agent
+from src.api.profile import router as profile_router
 from src.api.rate_limit import limiter
 from src.api.security_headers import SecurityHeadersMiddleware
 from src.api.sse import with_heartbeat
@@ -195,6 +196,11 @@ def create_app() -> FastAPI:
     # Session management (list / read / delete). Streaming a turn is only
     # part of a chat product; see src/api/threads.py.
     app.include_router(threads_router)
+    # Leer el perfil y corregir sus cuatro preferencias de busqueda. Hasta
+    # ahora el perfil solo tenia entrada (el extractor conversacional) y
+    # ninguna salida: el estudiante no podia ver ni arreglar lo que el sistema
+    # creia saber de el. Ver src/api/profile.py.
+    app.include_router(profile_router)
 
     return app
 
