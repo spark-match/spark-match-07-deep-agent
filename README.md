@@ -309,9 +309,20 @@ Sin key el agente funciona igual: avisa por WARNING en el arranque y no manda na
 
 > Una traza lleva la conversación entera, incluido lo que escribe el estudiante. Es lo que la hace útil y también lo que conviene tener presente antes de dejarla encendida con usuarios reales.
 
+### Datasets y Experiments
+
+`make eval-langsmith` sube `evals/dataset.jsonl` (los mismos 29 casos que usa `make eval-test`) como Dataset de LangSmith y corre un Experiment: el agente real contra cada caso, evaluado por el mismo `SparkMatchJudge` que ya existía — nada del rubric se reimplementa, `evals/langsmith_experiment.py` sólo lo envuelve en la firma que espera `langsmith.evaluate()`. A diferencia de `evals.runner` (pass/fail en consola, sin memoria entre corridas), un Experiment queda en LangSmith y es comparable contra el siguiente: sirve para ver si un cambio de prompt subió o bajó `riasec_accuracy` sin adivinar.
+
+Reporta 5 feedback keys por caso — las 4 dimensiones del rubric más el score ponderado — así la tabla de Experiments de LangSmith se puede ordenar por `tone` o `safety` sola, no sólo por el promedio.
+
+```bash
+make eval-langsmith                 # las 29 completas
+uv run python -m evals.langsmith_experiment --limit 3   # smoke barato
+```
+
 ## Trabajos futuros
 
-- **Datasets de evaluación** a partir de interacciones reales capturadas en LangSmith, para regression testing de los prompts y detección de alucinaciones.
+- **Evaluadores online**: correr `spark_match_rubric` como evaluador automático sobre una muestra del tráfico real de dev/prod (`langsmith evaluator upload --project`), no sólo sobre el dataset curado.
 
 ## Contexto académico
 
