@@ -19,6 +19,8 @@ Quick start::
 from __future__ import annotations
 
 import argparse
+import asyncio
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from evals.dataset import EvalCase, load_dataset
@@ -28,6 +30,18 @@ if TYPE_CHECKING:
     from langsmith import Client
 
 DEFAULT_DATASET_NAME = "spark-match-agent-evals"
+
+# Namespace fijo para derivar el id de cada Example de su `case_id`.
+# `create_examples` NO deduplica por contenido -- medido el 2026-08-09:
+# tres corridas con `--limit 3` dejaron el dataset con 36 examples y solo 30
+# case_id unicos. Con un id derivado del case_id, subir el mismo caso otra
+# vez actualiza el Example en vez de crear un gemelo.
+_EXAMPLE_ID_NAMESPACE = uuid.UUID("6f1b2c3d-4e5a-4b7c-8d9e-0a1b2c3d4e5f")
+
+
+def _example_id(case_id: str) -> uuid.UUID:
+    """Id estable y reproducible para el Example de un caso."""
+    return uuid.uuid5(_EXAMPLE_ID_NAMESPACE, case_id)
 
 
 def _build_examples(cases: list[EvalCase]) -> list[dict[str, Any]]:
@@ -40,6 +54,7 @@ def _build_examples(cases: list[EvalCase]) -> list[dict[str, Any]]:
     """
     return [
         {
+            "id": _example_id(case.id),
             "inputs": {
                 "case_id": case.id,
                 "turns": [{"role": t.role, "content": t.content} for t in case.turns],
@@ -62,10 +77,11 @@ def ensure_dataset(
 ) -> str:
     """Crea el dataset si no existe y sube/actualiza sus examples.
 
-    Idempotente: ``create_examples`` es upsert, así que correr esto de
-    nuevo con el mismo dataset no duplica nada. ``limit`` corta la lista de
-    casos antes de subir, para una corrida barata de humo en vez de las 29
-    completas.
+    Idempotente **gracias al id derivado del ``case_id``** (ver
+    :func:`_example_id`), no porque ``create_examples`` lo sea: sin id
+    explicito crea un Example nuevo en cada llamada, aunque el contenido
+    sea identico. ``limit`` corta la lista de casos antes de subir, para
+    una corrida barata de humo en vez de las 29 completas.
 
     Returns:
         El nombre del dataset (para pasarlo tal cual a ``evaluate(data=...)``).
@@ -91,9 +107,27 @@ def ensure_dataset(
 def run_target(inputs: dict[str, Any]) -> dict[str, Any]:
     """Corre UN caso contra el agente real. Es el ``target`` de `evaluate()`.
 
-    Mismo patrón que ``evals.runner._run_live_case``: agente fresco por
-    llamada (no se comparte entre corridas concurrentes) y el thread_id es
-    el id del caso, para que cada uno tenga su propio checkpoint.
+    Agente fresco por llamada (no se comparte entre corridas concurrentes)
+    y el thread_id es el id del caso, para que cada uno tenga su propio
+    checkpoint.
+
+    **`ainvoke` y no `invoke`**, aunque `evaluate()` llame a este target
+    desde un thread pool y obligue a un `asyncio.run` por caso. La API de
+    produccion mueve al agente con `astream_events` (ver
+    `src/api/app.py` y el ag_ui adapter), y varias piezas del grafo se
+    comportan distinto en modo sincrono:
+
+    - `web_search` es `async def`, asi que bajo `.invoke()` su
+      `StructuredTool` levanta `NotImplementedError: StructuredTool does
+      not support sync invocation` y mata el turno entero.
+    - Los hooks `wrap_model_call` / `wrap_tool_call` de los middlewares
+      "genuinely require separate sync/async implementations or raise
+      NotImplementedError in the mismatched mode" (`src/agent/guardrails.py`).
+
+    Medido el 2026-08-09: con `.invoke()` el run completo dio
+    NotImplementedError en los casos que tocaban web_search, hundiendo
+    `riasec_accuracy` por un fallo del harness y no del agente. Evaluar por
+    un camino que produccion no usa mide otra cosa.
     """
     from src.agent.factory import create_spark_agent
     from src.budget import reset_session_budget
@@ -102,9 +136,11 @@ def run_target(inputs: dict[str, Any]) -> dict[str, Any]:
     case_id = inputs["case_id"]
     reset_session_budget(case_id)
 
-    result = agent.invoke(
-        {"messages": inputs["turns"]},
-        config={"configurable": {"thread_id": case_id}},
+    result = asyncio.run(
+        agent.ainvoke(
+            {"messages": inputs["turns"]},
+            config={"configurable": {"thread_id": case_id}},
+        )
     )
 
     final_messages = result.get("messages", [])
@@ -166,6 +202,17 @@ def main() -> None:
         default=3,
         help="Casos en paralelo contra el agente real (default: 3)",
     )
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help=(
+            "Correr cada caso N veces dentro del mismo Experiment. Con N>1 el "
+            "stdev de cada feedback key deja de ser ruido y empieza a medir la "
+            "varianza real del agente + el juez, que es lo que separa una "
+            "regresion de un mal dia del LLM (default: 1)"
+        ),
+    )
     args = parser.parse_args()
 
     from langsmith import Client
@@ -188,6 +235,7 @@ def main() -> None:
         evaluators=[spark_match_rubric],
         experiment_prefix="spark-match-agent",
         max_concurrency=args.max_concurrency,
+        num_repetitions=args.repetitions,
         client=client,
     )
 

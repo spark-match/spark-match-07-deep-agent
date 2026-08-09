@@ -5,7 +5,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from evals.dataset import EvalCase, EvalTurn
 
-from evals.langsmith_experiment import _build_examples, ensure_dataset, spark_match_rubric
+from evals.langsmith_experiment import (
+    _build_examples,
+    _example_id,
+    ensure_dataset,
+    spark_match_rubric,
+)
 
 
 class TestBuildExamples:
@@ -50,6 +55,31 @@ class TestBuildExamples:
         ]
         examples = _build_examples(cases)
         assert [e["inputs"]["case_id"] for e in examples] == ["a", "b"]
+
+
+class TestExampleIdIsDeterministic:
+    """El id derivado del case_id es lo unico que hace idempotente la
+    subida: `create_examples` sin id explicito crea un Example nuevo en
+    cada llamada. Medido el 2026-08-09 -- tres corridas con `--limit 3`
+    dejaron 36 examples con 30 case_id unicos.
+    """
+
+    def test_same_case_id_gives_same_uuid(self):
+        assert _example_id("assessment_basic_IRC") == _example_id("assessment_basic_IRC")
+
+    def test_different_case_ids_give_different_uuids(self):
+        assert _example_id("assessment_basic_IRC") != _example_id("assessment_basic_ASE")
+
+    def test_every_example_carries_its_id(self):
+        case = EvalCase(id="c1", turns=[EvalTurn("user", "hola")])
+        assert _build_examples([case])[0]["id"] == _example_id("c1")
+
+    def test_full_dataset_has_no_colliding_ids(self):
+        from evals.dataset import load_dataset
+
+        examples = _build_examples(load_dataset())
+        ids = [e["id"] for e in examples]
+        assert len(set(ids)) == len(ids), "dos casos del dataset comparten id de Example"
 
 
 class TestEnsureDataset:
