@@ -9,10 +9,16 @@ from src.tools.catalog.handler import search_careers_handler
 
 @tool
 def search_careers(query: str, field: str | None = None) -> list[dict[str, Any]]:
-    """Search the career catalog by keyword or field.
+    """Describe UNA carrera en general: en qué consiste, para qué perfil RIASEC
+    encaja, cómo está la demanda laboral. Un catálogo curado de 20 fichas
+    genéricas, no un listado — no lo uses para "qué carreras hay" ni para
+    explorar opciones.
 
-    In the MVP, performs simple text matching on the local catalog.
-    In production, this will use pgvector semantic search.
+    NO uses esta herramienta para nombrar universidades, institutos, costos,
+    sueldos o tasas de admisión del Perú: no tiene esos datos. Para eso, o
+    para cualquier pregunta que empiece por "qué carreras hay" o "qué
+    opciones tengo", usa `search_programs` — 6208 combinaciones reales de
+    carrera e institución del portal Ponte en Carrera (MINEDU).
 
     Args:
         query: Search query (career name, skill, or description keywords)
