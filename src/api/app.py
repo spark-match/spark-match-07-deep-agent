@@ -40,14 +40,18 @@ logger = logging.getLogger(__name__)
 # (04-frontend) connects here over SSE.
 AG_UI_PATH = "/ag-ui"
 
-# Se precalcula aqui en vez de interpolar dentro del decorador. Sonar
-# (python:S8411) lee el TEXTO del decorador, y en `@app.get(f"{AG_UI_PATH}/health")`
-# ve unas llaves y las toma por un path parameter de FastAPI llamado
-# "AG_UI_PATH" que faltaria en la firma de la funcion. En ejecucion la f-string
-# se resuelve a "/ag-ui/health" y no hay parametro ninguno, asi que es un falso
-# positivo -- pero pasandole un nombre en lugar de una cadena con llaves deja de
-# haber nada que malinterpretar, y de paso queda igual que la linea de arriba.
-AG_UI_HEALTH_PATH = f"{AG_UI_PATH}/health"
+# Concatenacion y no f-string, a proposito. Sonar (python:S8411) busca `{...}`
+# en la ruta de un endpoint para saber que path parameters declara, y lo hace
+# sobre el TEXTO: con `f"{AG_UI_PATH}/health"` ve las llaves de la
+# interpolacion y reclama un parametro llamado "AG_UI_PATH" que faltaria en la
+# firma de la funcion. En ejecucion eso vale "/ag-ui/health" y no hay parametro
+# ninguno, asi que el aviso es falso -- pero llegaba al Quality Gate como bug.
+#
+# Sacar la f-string a una constante no bastaba: Sonar propaga el valor y se
+# queda con el texto original, llaves incluidas. Concatenando no hay llaves en
+# ningun sitio y la ruta se sigue derivando de AG_UI_PATH, que es lo que
+# importa para que las dos no se separen nunca.
+AG_UI_HEALTH_PATH = AG_UI_PATH + "/health"
 
 # Lo que se le manda al navegador cuando el turno revienta a mitad del
 # stream. Fijo y sin el detalle de la excepcion a proposito: ese detalle
