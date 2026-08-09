@@ -31,17 +31,22 @@ class TestToolWrappers:
         assert "dominant_types" in result
 
     def test_catalog_tool_returns_careers_list(self):
+        # `career` y no `id`/`name`: al retirar `data/careers/*.md` el
+        # 2026-08-09 las carreras dejaron de tener id --las 554 del portal se
+        # identifican por nombre-- y el vocabulario quedo alineado con el de
+        # `search_programs`, que ya usaba `career`/`career_family`.
         result = search_careers.invoke({"query": "psicolog"})
         assert isinstance(result, list)
         if result:
-            assert "id" in result[0]
-            assert "name" in result[0]
+            assert "career" in result[0]
+            assert "career_family" in result[0]
+            assert "riasec_profile" in result[0]
 
     def test_matching_tool_returns_matches_list(self):
         result = calculate_affinity.invoke({"riasec_code": "IRC"})
         assert isinstance(result, list)
         if result:
-            assert "career_id" in result[0]
+            assert "career" in result[0]
             assert "affinity_score" in result[0]
 
     def test_web_search_tool_is_callable(self):

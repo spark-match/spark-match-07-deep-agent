@@ -12,6 +12,7 @@ from src.prompts import MATCHING_SYSTEM_PROMPT
 from src.tools.catalog import search_careers
 from src.tools.matching import calculate_affinity
 from src.tools.programs import search_programs
+from src.tools.recommendation import recommend_programs
 
 MATCHING_SUBAGENT = {
     "name": "matching",
@@ -23,7 +24,11 @@ MATCHING_SUBAGENT = {
         "admisión."
     ),
     "system_prompt": MATCHING_SYSTEM_PROMPT,
-    # `search_programs` es lo que convierte una recomendación abstracta en algo
-    # accionable: dónde se estudia esa carrera, cuánto cuesta y qué se gana.
-    "tools": [search_careers, search_programs, calculate_affinity],
+    # `recommend_programs` es la herramienta principal de este subagente: es la
+    # única que aplica los filtros del estudiante (región, gestión, tipo de
+    # institución, presupuesto) y cruza afinidad con economía en una sola
+    # puntuación. Las otras tres siguen porque responden preguntas distintas:
+    # `search_careers` qué carreras existen, `search_programs` búsqueda libre
+    # sin perfil, `calculate_affinity` afinidad pura sin institución ni cifras.
+    "tools": [recommend_programs, search_careers, search_programs, calculate_affinity],
 }

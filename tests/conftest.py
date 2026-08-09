@@ -1,23 +1,23 @@
 """Shared pytest fixtures for the test suite.
 
-The catalog loader uses a module-level cache for performance. When the
-TestReloadCatalog test runs, it mutates that cache with a tmp_path,
-which leaks into subsequent tests. We use an autouse fixture that
-reloads the cache from the real catalog directory after each test,
-so the catalog is always in a clean state.
+El catalogo se cachea a nivel de modulo (`_CACHE` para los 6.208 programas y
+`_CAREERS_CACHE` para la vista de 554 carreras que se deriva de ellos). Los
+tests que cargan un CSV de `tmp_path` ensucian esas caches, y sin limpiarlas la
+suciedad se filtra al siguiente test. Esta fixture las reinicia antes y despues
+de cada uno: antes por si algo anterior las dejo sucias, despues para no
+ensuciar a nadie.
+
+`reload_careers` limpia las dos, asi que basta con una llamada.
 """
 
 import pytest
 
-from src.tools.catalog import reload_career_catalog
+from src.tools.programs.loader import reload_careers
 
 
 @pytest.fixture(autouse=True)
-def _reset_catalog_cache(request):
-    """Reset the career-catalog cache before each test."""
-    # Reload BEFORE so we start from a clean state in case a previous
-    # test polluted the cache.
-    reload_career_catalog()
+def _reset_catalog_cache():
+    """Reinicia las caches del catalogo alrededor de cada test."""
+    reload_careers()
     yield
-    # Reload AFTER too, so this test's mutations don't leak.
-    reload_career_catalog()
+    reload_careers()

@@ -3,6 +3,7 @@
 import itertools
 
 from src.tools.matching.handler import (
+    MAX_TOP_N,
     _raw_riasec_score,
     _riasec_similarity,
     calculate_affinity_handler,
@@ -29,10 +30,19 @@ class TestMatchingHandler:
         assert scores == sorted(scores, reverse=True)
 
     def test_high_affinity_for_matching_profile(self):
-        """A profile matching CS (IRC) should score CS highly."""
-        result = calculate_affinity_handler(riasec_code="IRC")
-        cs_result = next(m for m in result["data"]["matches"] if m["career_id"] == "cs")
-        assert cs_result["affinity_score"] > 50
+        """Una carrera con el codigo exacto del perfil puntua al maximo.
+
+        Antes esto se comprobaba contra `career_id == "cs"`, una de las veinte
+        fichas de `data/careers`. Ya no hay ids: el catalogo son las 554
+        carreras del portal, identificadas por nombre. Se comprueba la
+        propiedad -- codigo identico, afinidad 100 -- en vez de una fila
+        concreta, que es lo que se queria decir desde el principio.
+        """
+        result = calculate_affinity_handler(riasec_code="IRC", top_n=1)
+        mejor = result["data"]["matches"][0]
+
+        assert mejor["riasec_profile"] == "IRC"
+        assert mejor["affinity_score"] == 100.0
 
     def test_uppercase_normalization(self):
         result = calculate_affinity_handler(riasec_code="ias")
@@ -47,6 +57,78 @@ class TestMatchingHandler:
         result = calculate_affinity_handler(riasec_code="IRC")
         assert result["data"]["top_n"] == 5
         assert len(result["data"]["matches"]) == 5
+
+
+class TestPuntuaElCatalogoReal:
+    """El 2026-08-09 el handler paso de las 20 fichas de `data/careers/*.md`
+    a las 554 carreras de `data/programs/programs.csv`.
+
+    El cambio de tamano no es cosmetico: trae dos problemas que con 20
+    entradas no existian, y estas pruebas los fijan.
+    """
+
+    def test_puntua_las_554_carreras(self):
+        result = calculate_affinity_handler(riasec_code="IAS")
+        assert result["data"]["total_scored"] == 554
+
+    def test_ninguna_carrera_se_repite_en_el_top(self):
+        """El problema numero uno de puntuar el CSV en crudo.
+
+        `programs.csv` es carrera x institucion: "Ingenieria de Sistemas"
+        aparece 53 veces. Puntuando las 6.208 filas, un top-5 saldria con la
+        misma carrera cinco veces en cinco universidades distintas y el
+        estudiante veria una sola opcion creyendo que ve cinco. Por eso se
+        puntua la vista colapsada y no las filas.
+        """
+        result = calculate_affinity_handler(riasec_code="ISR", top_n=25)
+        nombres = [m["career"] for m in result["data"]["matches"]]
+
+        assert len(nombres) == len(set(nombres))
+
+    def test_los_empates_se_ordenan_por_oferta_y_no_al_azar(self):
+        """El problema numero dos: 554 carreras en solo 52 codigos RIASEC.
+
+        Cualquier perfil empata a 100% con una decena de carreras. Sin criterio
+        de desempate el top-5 seria un sorteo entre ellas; con el, delante van
+        las que se pueden estudiar en mas sitios.
+        """
+        result = calculate_affinity_handler(riasec_code="SAE", top_n=25)
+        matches = result["data"]["matches"]
+
+        empatadas = [m for m in matches if m["affinity_score"] == matches[0]["affinity_score"]]
+        assert len(empatadas) > 1, "sin empates este test no comprueba nada"
+
+        cuentas = [m["program_count"] for m in empatadas]
+        assert cuentas == sorted(cuentas, reverse=True)
+
+    def test_dos_llamadas_iguales_dan_el_mismo_ranking(self):
+        primera = calculate_affinity_handler(riasec_code="SAE", top_n=10)
+        segunda = calculate_affinity_handler(riasec_code="SAE", top_n=10)
+
+        assert [m["career"] for m in primera["data"]["matches"]] == [
+            m["career"] for m in segunda["data"]["matches"]
+        ]
+
+    def test_top_n_tiene_tope_duro(self):
+        # Sin tope, `top_n=554` mete el catalogo entero en el contexto.
+        result = calculate_affinity_handler(riasec_code="IRC", top_n=1000)
+
+        assert len(result["data"]["matches"]) <= MAX_TOP_N
+        assert result["data"]["top_n"] == MAX_TOP_N
+
+    def test_cada_resultado_trae_su_familia_y_su_oferta(self):
+        result = calculate_affinity_handler(riasec_code="ECS", top_n=3)
+
+        for match in result["data"]["matches"]:
+            assert match["career_family"]
+            assert match["program_count"] >= 1
+            assert "career_id" not in match, "los ids eran del catalogo curado"
+
+    def test_declara_la_fuente_con_su_fecha(self):
+        result = calculate_affinity_handler(riasec_code="ECS")
+
+        assert "Ponte en Carrera" in result["data"]["source"]
+        assert "2026-06-13" in result["data"]["source"]
 
 
 class TestRiasecSimilarityBounds:

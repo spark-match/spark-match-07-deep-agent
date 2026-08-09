@@ -41,8 +41,37 @@ class TestToolRegistration:
             "search_careers",
             "search_programs",
             "calculate_affinity",
+            "recommend_programs",
             "web_search",
         }
+
+
+class TestRecommendProgramsTool:
+    async def test_devuelve_el_top_n_con_su_desglose(self):
+        result = await mcp_server.call_tool(
+            "recommend_programs",
+            {"riasec_code": "IRC", "region": "Arequipa", "top_n": 2},
+        )
+        data = result.structured_content
+
+        assert len(data["recommendations"]) == 2
+        assert {r["location"] for r in data["recommendations"]} == {"Arequipa"}
+        assert data["scoring_version"]
+        assert data["recommendations"][0]["score_breakdown"]
+
+    async def test_una_combinacion_imposible_explica_que_soltar(self):
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        with pytest.raises(ToolError, match="Soltando"):
+            await mcp_server.call_tool(
+                "recommend_programs",
+                {
+                    "riasec_code": "IRC",
+                    "region": "Madre de Dios",
+                    "management_type": "privada",
+                    "max_annual_cost": 50,
+                },
+            )
 
 
 class TestEvaluateRiasecProfileTool:

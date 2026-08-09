@@ -156,6 +156,55 @@ class TestAgentGraphStructure:
         assert "model" in nodes
         assert "tools" in nodes
 
+    def test_tool_call_repair_llega_a_todos_los_subagentes(self):
+        """`middleware=` de create_deep_agent NO baja a los subagentes.
+
+        deepagents monta cada subagente con
+        ``middleware = list(spec.get("middleware", []))`` -- de su propia
+        spec (deepagents/middleware/subagents.py:494). Como ninguna de
+        nuestras constantes lo declaraba, ToolCallRepairMiddleware protegia
+        al coordinador y a nadie mas, justo donde el fallo NO ocurria:
+        medido el 2026-08-09, planning_query_cs revento con un tool_use
+        huerfano DENTRO del subagente de planning.
+
+        Se comprueba sobre la spec y no sobre el grafo compilado porque el
+        grafo del subagente esta anidado y sus nodos no asoman en
+        `agent.get_graph().nodes` -- un test ahi pasaria estando roto.
+        """
+        from unittest.mock import patch
+
+        from src.agent.tool_call_repair import ToolCallRepairMiddleware
+
+        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
+        with patch("src.agent.factory.create_deep_agent") as spy:
+            create_spark_agent(model=fake)
+
+        subagents = spy.call_args.kwargs["subagents"]
+        assert subagents, "no se paso ningun subagente"
+        for spec in subagents:
+            assert any(
+                isinstance(m, ToolCallRepairMiddleware) for m in spec.get("middleware", [])
+            ), f"el subagente {spec.get('name')!r} corre sin ToolCallRepairMiddleware"
+
+    def test_cada_subagente_tiene_su_propia_instancia_del_middleware(self):
+        # Compartir una instancia entre grafos distintos es pedir que un
+        # estado se filtre de uno a otro.
+        from unittest.mock import patch
+
+        from src.agent.tool_call_repair import ToolCallRepairMiddleware
+
+        fake = ToolCallingFakeChatModel(messages=iter([AIMessage(content="hi")]))
+        with patch("src.agent.factory.create_deep_agent") as spy:
+            create_spark_agent(model=fake)
+
+        instancias = [
+            id(m)
+            for spec in spy.call_args.kwargs["subagents"]
+            for m in spec.get("middleware", [])
+            if isinstance(m, ToolCallRepairMiddleware)
+        ]
+        assert len(instancias) == len(set(instancias))
+
     def test_max_turns_middleware_is_wired_into_the_graph(self):
         """Regression guard for B1: the hook must actually register as a node.
 

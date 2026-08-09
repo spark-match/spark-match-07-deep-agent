@@ -62,8 +62,10 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 │                                                             │
 │  Tools:                                                     │
 │  ├── evaluate_riasec_profile  (scoring RIASEC)              │
-│  ├── search_careers           (catálogo local → pgvector)   │
+│  ├── search_careers           (554 carreras del MINEDU)     │
+│  ├── search_programs          (6208 carrera × institución)  │
 │  ├── calculate_affinity       (matching perfil ↔ carrera)   │
+│  ├── recommend_programs       (Top-N multicriterio)         │
 │  └── web_search               (Tavily + DDG fallback)       │
 │                                                             │
 │  Memory:                                                    │
@@ -78,8 +80,17 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 | Subagente | Misión | Tools |
 |---|---|---|
 | `assessment` | Administra test RIASEC conversacional, infiere scores | `evaluate_riasec_profile` |
-| `matching` | Calcula afinidad y genera ranking Top-5 | `calculate_affinity`, `search_careers` |
-| `planning` | Genera planes de acción con recursos reales | `search_careers`, `web_search` |
+| `matching` | Calcula afinidad y genera ranking Top-5 | `recommend_programs`, `calculate_affinity`, `search_careers`, `search_programs` |
+| `planning` | Genera planes de acción con recursos buscados en vivo | `search_careers`, `web_search` |
+
+Las tres herramientas de catálogo leen **una sola fuente**,
+`data/programs/programs.csv` (Ponte en Carrera, MINEDU, snapshot del
+2026-06-13): `search_careers` la ve por carrera (554), `search_programs` por
+programa (6208 combinaciones carrera × institución) y `calculate_affinity`
+puntúa la vista por carrera. Hasta el 2026-08-09 hubo además un catálogo
+curado a mano en `data/careers/*.md` con veinte fichas y su propio RIASEC; se
+retiró para no mantener dos definiciones de «carrera» que iban a divergir —
+ver ADR-019 en `spark-match-03-backend`.
 
 ### Flujo del coordinador
 
@@ -182,10 +193,11 @@ uv run mypy src/
 │   │   └── system.py            # System prompt del coordinador
 │   └── tools/
 │       ├── __init__.py
-│       ├── assessment.py        # evaluate_riasec_profile
-│       ├── catalog.py           # search_careers (in-memory MVP)
-│       ├── matching.py          # calculate_affinity
-│       └── web_search.py        # Tavily + DuckDuckGo fallback
+│       ├── assessment/          # evaluate_riasec_profile
+│       ├── catalog/             # search_careers (vista por carrera)
+│       ├── matching/            # calculate_affinity
+│       ├── programs/            # search_programs + loader del CSV
+│       └── web_search/          # Tavily + DuckDuckGo fallback
 ├── skills/
 │   └── vocational_advisor/
 │       └── SKILL.md             # Skill on-demand (conocimiento RIASEC)

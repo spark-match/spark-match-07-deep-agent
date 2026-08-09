@@ -31,11 +31,18 @@ class TestCorsOriginsValidation:
 class TestMaxTokensSetting:
     """Sprint 8, task 8.6: max_tokens configurable via SPARK_MAX_TOKENS."""
 
-    def test_default_is_2048(self):
-        assert Settings().max_tokens == 2048
+    def test_default_is_4096(self):
+        """Subido de 2048 el 2026-08-09.
+
+        Desde la familia 4.6 el thinking adaptativo comparte `max_tokens`
+        con el texto de la respuesta en vez de ir aparte, asi que 2048
+        cortaba respuestas normales a media frase (stop_reason=max_tokens)
+        en cuanto el modelo razonaba un poco antes de contestar.
+        """
+        assert Settings().max_tokens == 4096
 
     def test_explicit_override(self):
-        assert Settings(max_tokens=4096).max_tokens == 4096
+        assert Settings(max_tokens=8192).max_tokens == 8192
 
     def test_env_var_override(self, monkeypatch):
         monkeypatch.setenv("SPARK_MAX_TOKENS", "1024")

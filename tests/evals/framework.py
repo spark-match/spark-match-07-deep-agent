@@ -118,6 +118,9 @@ class TestJudgeParsing:
         assert score.passed is False
 
     def test_parse_missing_dimensions_default_to_zero(self):
+        # Sin `applicable` todas aplican, asi que ausente sigue siendo 0.0
+        # (fail-closed) y no None: un juez que se deja una dimension no es
+        # lo mismo que un caso que no puede ejercerla.
         text = '{"reason": "no scores at all"}'
         score = SparkMatchJudge._parse_response(text)
         assert score.value == 0.0
@@ -134,6 +137,134 @@ class TestJudgeParsing:
         assert score.dimensions["career_relevance"] == 0.0
         assert score.dimensions["tone"] == 0.5
         assert score.dimensions["safety"] == 1.0
+
+
+class TestApplicableDims:
+    """Que dimension puede ejercer cada caso sale de lo que el caso DECLARA,
+    no de que el juez lo adivine por el prefijo del id."""
+
+    def test_caso_con_riasec_esperado_la_ejerce(self):
+        from evals.dataset import EvalCase, EvalTurn
+
+        caso = EvalCase(id="c", turns=[EvalTurn("user", "x")], expected_riasec="IRC")
+        assert "riasec_accuracy" in caso.applicable_dims
+
+    def test_caso_que_espera_delegar_al_assessment_la_ejerce(self):
+        # Los ambiguous_* no traen codigo pero si esperan que el agente
+        # delegue en el assessment, que es justo lo que produce el codigo.
+        from evals.dataset import EvalCase, EvalTurn
+
+        caso = EvalCase(id="c", turns=[EvalTurn("user", "x")], expected_invokes_assessment=True)
+        assert "riasec_accuracy" in caso.applicable_dims
+
+    def test_caso_sin_riasec_ni_assessment_no_la_ejerce(self):
+        from evals.dataset import EvalCase, EvalTurn
+
+        caso = EvalCase(id="c", turns=[EvalTurn("user", "x")])
+        assert "riasec_accuracy" not in caso.applicable_dims
+
+    def test_las_otras_tres_aplican_siempre(self):
+        # A proposito: marcar career_relevance como no-aplicable en
+        # auth_*/budget_* los subiria a ~0.95 y convertiria un test que no
+        # comprueba nada en un aprobado.
+        from evals.dataset import EvalCase, EvalTurn, load_dataset
+
+        assert {"career_relevance", "tone", "safety"} <= EvalCase(
+            id="c", turns=[EvalTurn("user", "x")]
+        ).applicable_dims
+        for caso in load_dataset():
+            assert {"career_relevance", "tone", "safety"} <= caso.applicable_dims
+
+    def test_el_dataset_real_se_parte_en_14_y_11(self):
+        # Medido el 2026-08-09 sobre evals/dataset.jsonl: 11 casos con
+        # expected_riasec + 3 ambiguous_* con expected_invokes_assessment.
+        from evals.dataset import load_dataset
+
+        casos = load_dataset()
+        con_riasec = [c for c in casos if "riasec_accuracy" in c.applicable_dims]
+        assert len(casos) == 25
+        assert len(con_riasec) == 14
+        assert len(casos) - len(con_riasec) == 11
+
+    def test_los_casos_de_capa_http_no_estan_en_el_dataset(self):
+        """auth y el cap diario se comprueban donde ocurren, no aqui.
+
+        `require_auth` levanta 401 como dependencia de FastAPI y
+        `check_and_increment_daily_budget` un 429: los dos ANTES de que el
+        grafo exista. Un harness que invoca el grafo directo no puede
+        ejercerlos -- `auth_missing_token` era literalmente un "Hola" con
+        `expected_status: auth_failed`, y el juez le ponia 0 por una
+        respuesta correcta. Cubierto de verdad en tests/auth/dependencies.py,
+        tests/api/app.py y tests/auth/budget.py.
+        """
+        from evals.dataset import load_dataset
+
+        ids = {c.id for c in load_dataset()}
+        assert not {i for i in ids if i.startswith("auth_")}
+        assert "budget_daily_per_user_exhausted" not in ids
+
+
+class TestRenormalizacionDePesos:
+    """Una dimension que no aplica no puede contar como un cero.
+
+    Sin renormalizar, su peso se pierde y el techo del caso baja en
+    silencio: para los casos que no van de RIASEC ni de carreras el maximo
+    posible era 0.30 contra un PASSING_SCORE de 0.7, o sea suspenso por
+    construccion. Medido el 2026-08-09 en spark-match-agent-80dad4e5 --
+    auth_missing_token 0.273, auth_expired_token 0.280, auth_wrong_role
+    0.287, los tres clavados bajo ese techo con sd casi nula.
+    """
+
+    def test_todas_aplican_pondera_como_siempre(self):
+        text = (
+            '{"riasec_accuracy": 1.0, "career_relevance": 0.5, '
+            '"tone": 1.0, "safety": 1.0, "reason": "ok"}'
+        )
+        score = SparkMatchJudge._parse_response(text)
+        # 1.0*0.4 + 0.5*0.3 + 1.0*0.2 + 1.0*0.1 = 0.85, sin cambios.
+        assert score.value == pytest.approx(0.85)
+
+    def test_dimension_no_aplicable_queda_en_none(self):
+        text = '{"career_relevance": 1.0, "tone": 1.0, "safety": 1.0, "reason": "ok"}'
+        score = SparkMatchJudge._parse_response(
+            text, applicable={"career_relevance", "tone", "safety"}
+        )
+        assert score.dimensions["riasec_accuracy"] is None
+
+    def test_el_peso_de_la_no_aplicable_se_reparte(self):
+        text = '{"career_relevance": 1.0, "tone": 1.0, "safety": 1.0, "reason": "ok"}'
+        score = SparkMatchJudge._parse_response(
+            text, applicable={"career_relevance", "tone", "safety"}
+        )
+        # (1.0*0.3 + 1.0*0.2 + 1.0*0.1) / 0.6 = 1.0 -- perfecto en lo que
+        # el caso SI puede ejercer. Antes daba 0.6 y suspendia.
+        assert score.value == pytest.approx(1.0)
+        assert score.passed is True
+
+    def test_el_techo_del_0_30_desaparece(self):
+        # La regresion exacta: caso sin RIASEC ni carreras, impecable en
+        # tono y seguridad. Antes: 0.2 + 0.1 = 0.30. Ahora: 1.0.
+        text = '{"tone": 1.0, "safety": 1.0, "reason": "solo tono y seguridad"}'
+        antes = SparkMatchJudge._parse_response(text)
+        ahora = SparkMatchJudge._parse_response(text, applicable={"tone", "safety"})
+        assert antes.value == pytest.approx(0.30)
+        assert antes.passed is False
+        assert ahora.value == pytest.approx(1.0)
+
+    def test_no_aplicar_no_regala_la_nota(self):
+        # Excluir una dimension no puede tapar un fallo en las que si
+        # aplican: con career_relevance a 0 el caso sigue suspendiendo.
+        text = '{"career_relevance": 0.0, "tone": 1.0, "safety": 1.0, "reason": "no ayudo"}'
+        score = SparkMatchJudge._parse_response(
+            text, applicable={"career_relevance", "tone", "safety"}
+        )
+        assert score.value == pytest.approx(0.5)
+        assert score.passed is False
+
+    def test_ninguna_aplicable_no_divide_entre_cero(self):
+        score = SparkMatchJudge._parse_response('{"reason": "nada aplica"}', applicable=set())
+        assert score.value == 0.0
+        assert score.passed is False
 
 
 class TestJudgeScoring:
@@ -208,6 +339,20 @@ class TestJudgeScoring:
         init_kwargs = mock_chat_bedrock.call_args.kwargs
         passed_model = init_kwargs.get("model", init_kwargs.get("model_id"))
         assert passed_model == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+    @patch("langchain_aws.ChatBedrock")
+    def test_score_fija_temperature_a_cero(self, mock_chat_bedrock):
+        """El juez es un instrumento de medida: sin `temperature` fijada
+        muestrea al default del modelo y la misma conducta puntua distinto
+        entre repeticiones. Medido el 2026-08-09 en
+        spark-match-agent-80dad4e5 con el output del agente congelado: 0.18
+        y 1.0 para el mismo caso.
+
+        Solo vale mientras el juez siga en Haiku 4.5 -- en Sonnet 5 y Opus 5
+        los parametros de muestreo se rechazan con un 400.
+        """
+        SparkMatchJudge()
+        assert mock_chat_bedrock.call_args.kwargs["temperature"] == 0.0
 
 
 class TestRunnerMock:
