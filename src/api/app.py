@@ -40,6 +40,15 @@ logger = logging.getLogger(__name__)
 # (04-frontend) connects here over SSE.
 AG_UI_PATH = "/ag-ui"
 
+# Se precalcula aqui en vez de interpolar dentro del decorador. Sonar
+# (python:S8411) lee el TEXTO del decorador, y en `@app.get(f"{AG_UI_PATH}/health")`
+# ve unas llaves y las toma por un path parameter de FastAPI llamado
+# "AG_UI_PATH" que faltaria en la firma de la funcion. En ejecucion la f-string
+# se resuelve a "/ag-ui/health" y no hay parametro ninguno, asi que es un falso
+# positivo -- pero pasandole un nombre en lugar de una cadena con llaves deja de
+# haber nada que malinterpretar, y de paso queda igual que la linea de arriba.
+AG_UI_HEALTH_PATH = f"{AG_UI_PATH}/health"
+
 # Lo que se le manda al navegador cuando el turno revienta a mitad del
 # stream. Fijo y sin el detalle de la excepcion a proposito: ese detalle
 # lleva nombres de modulos, ids internos y a veces trozos del historial --
@@ -188,7 +197,7 @@ def create_app() -> FastAPI:
     # closure defined here).
     app.add_api_route(AG_UI_PATH, ag_ui_endpoint, methods=["POST"])
 
-    @app.get(f"{AG_UI_PATH}/health")
+    @app.get(AG_UI_HEALTH_PATH)
     async def ag_ui_health() -> dict[str, str]:
         """Health check at /ag-ui/health (mirrors the workshop convention)."""
         return {"status": "ok", "agent": settings.agent_name}
