@@ -80,11 +80,17 @@ async def with_heartbeat(
             pending.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pending
-        # The consumer closing us (client disconnect, most often) has to
-        # close the agent run too. Without this the source generator stays
-        # suspended at its yield until the event loop's async-generator
-        # finalizer gets to it, which on a long-running server means the
-        # LangGraph run leaks for the lifetime of the process.
+        # Cerrar el generador de origen cuando el consumidor se va (un
+        # cliente que se desconecta, casi siempre). Sin esto se quedaria
+        # suspendido en su yield hasta que lo finalizara el recolector de
+        # generadores asincronos del bucle, lo que en un servidor de larga
+        # vida significa fugarlo durante toda la vida del proceso.
+        #
+        # Esto ya NO mata el turno. Antes si: el generador de origen
+        # conducia el grafo, asi que cerrarlo mataba el run y cerrar la
+        # pestaña te dejaba sin respuesta. Ahora el run vive en una tarea
+        # aparte y esto solo le dice que deje de encolar eventos que nadie
+        # va a leer -- ver src/api/runs.py.
         aclose = getattr(iterator, "aclose", None)
         if aclose is not None:
             await aclose()

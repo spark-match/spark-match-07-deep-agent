@@ -1,10 +1,9 @@
 """FastAPI application with AG-UI streaming endpoint."""
 
-import asyncio
-import contextlib
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from ag_ui.core.events import EventType, RunErrorEvent
 from ag_ui_langgraph import LangGraphAgent
@@ -18,6 +17,7 @@ from slowapi.errors import RateLimitExceeded
 from src.agent import create_spark_agent
 from src.api.profile import router as profile_router
 from src.api.rate_limit import limiter
+from src.api.runs import TurnosEnVuelo, eventos_del_turno
 from src.api.security_headers import SecurityHeadersMiddleware
 from src.api.sse import with_heartbeat
 from src.api.threads import router as threads_router
@@ -120,9 +120,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             # and deleting one both go straight to the checkpointer, which
             # is the only place the turn-by-turn history lives.
             app.state.checkpointer = persistence.checkpointer
+            # Los turnos que siguen corriendo sin nadie mirando. Vive en el
+            # app y no en un global para que dos apps en el mismo proceso
+            # -- cada test monta la suya -- no compartan turnos.
+            app.state.turnos = TurnosEnVuelo()
 
             yield
         finally:
+            # Antes de cerrar la persistencia: un turno en vuelo sigue
+            # escribiendo en el checkpointer, y tirarle el pool debajo lo
+            # mataria con la mitad del turno escrita. Acotado porque ECS
+            # manda SIGKILL al agotarse el stopTimeout del servicio, y
+            # pasarse de ese plazo no gana nada.
+            await app.state.turnos.esperar(settings.shutdown_grace_seconds)
+
             if reflection_executor is not None:
                 reflection_executor.shutdown(wait=True, cancel_futures=True)
 
@@ -365,40 +376,39 @@ async def ag_ui_endpoint(
         }
     }
 
+    async def eventos_publicables() -> AsyncIterator[Any]:
+        async for event in request_agent.run(input_data):
+            if not _is_internal_raw_event(event, settings.sse_emit_raw_events):
+                yield event
+
+    def avisar_del_fallo(error: Exception) -> RunErrorEvent:
+        # Sin esto, cualquier excepcion dentro del grafo sale como
+        # "Exception in ASGI application" y el SSE se corta sin emitir NADA.
+        # El frontend termina su bucle sin error, asi que el estudiante se
+        # queda mirando su pregunta: ni respuesta, ni aviso, ni forma de
+        # saber que paso. Medido en dev el 2026-08-08 con un historial
+        # invalido (ver src/agent/tool_call_repair.py): el turno moria en
+        # silencio y el estudiante lo reintentaba una y otra vez. RUN_ERROR
+        # es el evento que el protocolo tiene para esto y el frontend ya lo
+        # maneja.
+        logger.exception("El turno fallo (thread_id=%s)", thread_id, exc_info=error)
+        return RunErrorEvent(message=STREAM_FAILURE_MESSAGE, code="agent_stream_failed")
+
+    async def soltar_la_conversacion() -> None:
+        await release_run_lease(store, thread_id, lease.run_id)
+
+    # El turno se conduce en una tarea aparte y los eventos llegan por una
+    # cola. Antes lo conducia este mismo generador, asi que cuando el
+    # cliente se iba `with_heartbeat` lo cerraba y el run moria con el: si
+    # te ibas mientras el modelo escribia, su mensaje no se persistia y
+    # volvias a encontrar tu pregunta sin respuesta. Ver src/api/runs.py.
+    turno = request.app.state.turnos.lanzar(
+        eventos_publicables, avisar_del_fallo, soltar_la_conversacion
+    )
+
     async def event_generator() -> AsyncIterator[str]:
-        # El try no es defensivo por si acaso: sin el, cualquier excepcion
-        # dentro del grafo sale como "Exception in ASGI application" y el SSE
-        # se corta sin emitir NADA. El frontend termina su bucle sin error,
-        # asi que el estudiante se queda mirando su pregunta: ni respuesta,
-        # ni aviso, ni forma de saber que paso. Medido en dev el 2026-08-08
-        # con un historial invalido (ver src/agent/tool_call_repair.py): el
-        # turno moria en silencio y el estudiante lo reintentaba una y otra
-        # vez. RUN_ERROR es el evento que el protocolo tiene para esto y el
-        # frontend ya lo maneja.
-        #
-        # CancelledError hereda de BaseException, no de Exception, asi que
-        # un cliente que se va (cerrar la pestana, cambiar de conversacion)
-        # no pasa por aqui: eso no es un fallo y no hay a quien avisarle.
-        try:
-            async for event in request_agent.run(input_data):
-                if _is_internal_raw_event(event, settings.sse_emit_raw_events):
-                    continue
-                yield encoder.encode(event)
-        except Exception:
-            logger.exception("El turno fallo a mitad del stream (thread_id=%s)", thread_id)
-            yield encoder.encode(
-                RunErrorEvent(message=STREAM_FAILURE_MESSAGE, code="agent_stream_failed")
-            )
-        finally:
-            # Tambien cuando el cliente se va. Ese camino entra por
-            # CancelledError, que no pasa por el `except Exception` de
-            # arriba, y sin esto la conversacion se quedaria bloqueada
-            # hasta que expirara el arrendamiento: el estudiante cierra la
-            # pestaña, vuelve a entrar, y no puede escribir en cinco
-            # minutos. El `shield` es porque estamos EN la cancelacion y un
-            # await desnudo aqui volveria a cancelarse antes de soltar.
-            with contextlib.suppress(Exception):
-                await asyncio.shield(release_run_lease(store, thread_id, lease.run_id))
+        async for event in eventos_del_turno(turno):
+            yield encoder.encode(event)
 
     return StreamingResponse(
         # Wrapped so a long silence inside a turn (classifier call, main

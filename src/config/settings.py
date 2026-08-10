@@ -207,6 +207,14 @@ class Settings(BaseSettings):
     # serialization entirely (a local run without a store already skips it).
     run_lease_ttl_seconds: float = 300.0
 
+    # Cuanto espera el apagado a los turnos que siguen corriendo (ver
+    # src/api/runs.py). Tiene que caber DENTRO del `stopTimeout` del
+    # servicio ECS -- pasado ese plazo llega el SIGKILL y esperar de mas no
+    # gana nada, solo retrasa el despliegue. Con 20 s un turno normal
+    # termina; uno con subagente puede no llegar, y se cancela para que al
+    # menos suelte su arrendamiento.
+    shutdown_grace_seconds: float = 20.0
+
     # Whether the AG-UI stream forwards ag_ui_langgraph's RAW passthrough
     # events. Off by default: they carry the verbatim LangGraph internals,
     # system prompts included, to anyone holding a valid JWT. Turn on
