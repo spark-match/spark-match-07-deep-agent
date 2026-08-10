@@ -29,7 +29,18 @@ S3, checksum) NO vive aqui: es de la fila del backend (fase 5 del ADR). Esto
 es solo el contenido.
 """
 
+from datetime import date
+
 from pydantic import BaseModel, Field
+
+# Version de la forma de este documento. Sube cuando un lector viejo dejaria
+# de entender un informe nuevo: campo que desaparece, campo que cambia de
+# tipo o de significado. Anadir un campo opcional no la mueve.
+#
+# Un informe se guarda en S3 y se relee meses despues, cuando el codigo que lo
+# escribio ya no existe. Sin este numero, el que lo abra tiene que adivinar de
+# que epoca es por que campos trae; con el, puede decidir.
+SCHEMA_VERSION = "1"
 
 
 class ReportCareer(BaseModel):
@@ -72,6 +83,12 @@ class ReportCareer(BaseModel):
 class OrientationReport(BaseModel):
     """El contenido de un informe de orientacion, listo para guardar."""
 
+    # --- De la forma del documento, no de su contenido. ---
+    schema_version: str = Field(
+        default=SCHEMA_VERSION,
+        description="Version de la forma de este documento. Ver SCHEMA_VERSION.",
+    )
+
     # --- Del modelo. ---
     profile_summary: str = Field(
         description=(
@@ -103,7 +120,17 @@ class OrientationReport(BaseModel):
             "pesos cambien manana."
         )
     )
-    source: str = Field(description="Origen y fecha del corte de datos del catalogo.")
+    # Dos campos y no la etiqueta de una linea que se ensena en el chat. La
+    # fila del backend guarda el origen y la fecha en columnas distintas
+    # (ADR-019, D3), y la alternativa seria que el backend le sacara la fecha
+    # a un texto libre con una expresion regular: el dia que la etiqueta
+    # cambie de redaccion, la columna se llena de nulos sin que falle nada.
+    dataset_source: str = Field(
+        description="Catalogo de origen, sin fecha. Ej. 'Ponte en Carrera (MINEDU)'."
+    )
+    dataset_snapshot_date: date = Field(
+        description="Fecha del corte de datos con el que se genero el informe."
+    )
 
 
-__all__ = ["OrientationReport", "ReportCareer"]
+__all__ = ["SCHEMA_VERSION", "OrientationReport", "ReportCareer"]

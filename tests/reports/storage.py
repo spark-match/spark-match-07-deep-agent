@@ -12,6 +12,7 @@ import json
 import pytest
 
 from src.config import get_settings
+from src.models.report import OrientationReport
 from src.reports import storage
 from src.reports.pdf import PdfRenderingUnavailableError
 from src.reports.storage import resolve_reports_bucket, upload_report
@@ -163,7 +164,19 @@ class TestLoQueSeGuarda:
         upload_report(USER, REPORT, original)
 
         recuperado = json.loads(s3.puts[0]["Body"].decode("utf-8"))
-        assert recuperado == original.model_dump()
+        assert recuperado == original.model_dump(mode="json")
+
+    def test_el_json_guardado_vuelve_a_ser_un_informe(self, s3):
+        # Releer no es solo poder parsear el objeto: tiene que reconstruir el
+        # modelo. La fecha del corte sale como texto y tiene que volver a
+        # entrar como fecha, o el re-renderizado del PDF falla meses despues,
+        # cuando ya no hay a quien preguntarle.
+        original = informe()
+
+        upload_report(USER, REPORT, original)
+
+        vuelta = OrientationReport(**json.loads(s3.puts[0]["Body"].decode("utf-8")))
+        assert vuelta == original
 
     def test_el_json_no_escapa_los_acentos(self, s3):
         # `ensure_ascii=True` guardaria "Ingeniería", que es correcto y

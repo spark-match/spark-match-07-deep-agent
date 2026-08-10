@@ -2,6 +2,7 @@
 
 from src.tools.programs.handler import search_programs_handler
 from src.tools.programs.loader import (
+    DATASET_NAME,
     SNAPSHOT_DATE,
     SOURCE_LABEL,
     Program,
@@ -11,6 +12,7 @@ from src.tools.programs.loader import (
 from src.tools.programs.tool import search_programs
 
 __all__ = [
+    "DATASET_NAME",
     "SNAPSHOT_DATE",
     "SOURCE_LABEL",
     "Program",

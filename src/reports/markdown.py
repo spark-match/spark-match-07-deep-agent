@@ -125,7 +125,8 @@ def _procedencia(informe: OrientationReport) -> list[str]:
         "",
         f"- **La afinidad es un cálculo de Spark Match**, no una cifra oficial del "
         f"MINEDU. Criterio de puntuación `{informe.scoring_version}`.",
-        f"- Las cifras de duración, ingreso, costo y admisión salen de {informe.source}.",
+        f"- Las cifras de duración, ingreso, costo y admisión salen de "
+        f"{informe.dataset_source}, datos del {informe.dataset_snapshot_date.isoformat()}.",
         f"- Lo marcado como «{_MARCA_ESTIMADO}» **no es un dato de ese programa**: es la "
         "mediana de su familia de carrera, que se usa para rellenar lo que el portal no "
         "publicó.",
