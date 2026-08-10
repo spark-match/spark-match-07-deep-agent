@@ -136,7 +136,22 @@ class TestEstructura:
             )
         )
 
-        assert "Instituto Pedro P. Díaz · Arequipa · Instituto pública" in texto
+        assert "Instituto Pedro P. Díaz · Arequipa · Instituto público" in texto
+
+    def test_la_gestion_concuerda_con_el_tipo_de_institucion(self):
+        # El CSV guarda "Publica" en femenino, que concuerda con "universidad"
+        # y chirria con "instituto". Como esto se imprime y se ensena en casa,
+        # la concordancia no es un detalle.
+        universidad = report_to_markdown(
+            informe(careers=[carrera(institution_type="Universidad", management_type="Pública")])
+        )
+        instituto = report_to_markdown(
+            informe(careers=[carrera(institution_type="Instituto", management_type="Pública")])
+        )
+
+        assert "Universidad pública" in universidad
+        assert "Instituto público" in instituto
+        assert "Instituto pública" not in instituto
 
 
 class TestLosFiltros:
@@ -154,6 +169,26 @@ class TestLosFiltros:
         assert "411" in texto
         assert "6,208" in texto
         assert "Cambiar un filtro cambia esta lista" in texto
+
+    def test_los_filtros_se_nombran_en_castellano_y_no_por_su_clave(self):
+        # `management_type` y `max_annual_cost` son identificadores del codigo.
+        # En un documento que lee un chico de dieciseis anos no pintan nada.
+        texto = report_to_markdown(
+            informe(
+                filters_applied=["management_type", "max_annual_cost", "region"],
+                candidates_without_each_filter={
+                    "management_type": 900,
+                    "max_annual_cost": 1200,
+                    "region": 6208,
+                },
+            )
+        )
+
+        assert "management_type" not in texto
+        assert "max_annual_cost" not in texto
+        assert "si es pública o privada" in texto
+        assert "el presupuesto" in texto
+        assert "la región" in texto
 
     def test_sin_filtros_lo_dice_igualmente(self):
         # El silencio se leeria como "esto es todo el catalogo", que es

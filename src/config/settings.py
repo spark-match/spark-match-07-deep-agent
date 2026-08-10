@@ -143,6 +143,17 @@ class Settings(BaseSettings):
     # ADR-0002, el mismo que lee spark-match-03-backend.
     db_secret_ssm_param: str = "/spark-match/dev/config/db-secret-arn"
 
+    # --- Informes (ADR-019) ---
+    # Override local del bucket, analogo a `postgres_dsn` y `jwt_secret`:
+    # puesto, se usa verbatim y no se toca SSM. Sirve para apuntar a un
+    # bucket de pruebas sin credenciales de produccion (hard rule #7).
+    reports_bucket: str | None = None
+    # El bucket lo crea Terraform en la fase 3 y publica su nombre aqui, en
+    # vez de codificarlo: el nombre lleva el ambiente dentro
+    # (`spark-match-reports-dev`) y hacerlo constante obligaria a un cambio de
+    # codigo por ambiente.
+    reports_bucket_ssm_param: str = "/spark-match/dev/config/reports-bucket"
+
     # --- Long-term memory (Sprint 6, tasks 6.D/6.E) ---
     # Delay before the background StudentProfile extraction (langmem
     # ReflectionExecutor) actually runs, debounced from the end of a turn.
