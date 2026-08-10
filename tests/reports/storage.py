@@ -138,8 +138,12 @@ class TestElOrdenDeSubida:
 
         monkeypatch.setattr(storage, "report_to_pdf", revienta)
 
+        # La muestra se construye FUERA del `raises`: dentro, un fallo
+        # armandola seria indistinguible del que se quiere probar.
+        muestra = informe()
+
         with pytest.raises(PdfRenderingUnavailableError):
-            upload_report(USER, REPORT, informe())
+            upload_report(USER, REPORT, muestra)
 
         assert doble.puts == [], "el bucket no debe quedar a medias"
 
