@@ -257,7 +257,10 @@ async def web_search_handler(query: str, max_results: int = 5) -> dict[str, Any]
             "errors": None,
         }
     except Exception as e:
-        logger.error("Both search providers failed: %s", e)
+        # `exception` y no `error`, por lo mismo que en la rama de Tavily de
+        # arriba: aqui han fallado LOS DOS proveedores, y sin el traceback el
+        # log de ECS solo dice que la busqueda no va, no por donde.
+        logger.exception("Both search providers failed: %s", e)
         return {
             "status": "error",
             "data": None,
