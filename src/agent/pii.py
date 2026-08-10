@@ -70,11 +70,17 @@ from langgraph.types import Command
 # (fijos, aleatorios y exhaustivos hasta longitud 4). Ver
 # tests/agent/pii.py::TestEmailRegexComplexity.
 #
-# El NOSONAR silencia python:S8786, que marca este patron como vulnerable a
-# backtracking. Es un falso positivo: el analizador no interpreta los
-# cuantificadores posesivos (`++`), que son precisamente la cura de lo que
-# denuncia. Silenciarlo no tapa nada — la complejidad esta medida en el test
-# citado arriba, y ese test es lo que se rompe si alguien degrada el patron.
+# La supresion del final de la linea silencia python:S8786, que marca este
+# patron como vulnerable a backtracking. Es un falso positivo: el analizador
+# no interpreta los cuantificadores posesivos (`++`), que son precisamente la
+# cura de lo que denuncia. Silenciarlo no tapa nada — la complejidad esta
+# medida en el test citado arriba, y ese test es lo que se rompe si alguien
+# degrada el patron.
+#
+# Y se dice «la supresion» en vez de nombrar la marca: python:S7632 lee
+# cualquier comentario que contenga esa palabra como una supresion, asi que
+# escribirla aqui para EXPLICARLA convertia este parrafo en una supresion
+# malformada. Tumbo el quality gate de dev el 2026-08-10.
 _EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]++@[\w-]++\.[a-zA-Z]{2,}")  # NOSONAR
 
 # Peru DNI: 8 digits, only redacted when a recognizable identity-document
