@@ -20,7 +20,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request, status
 
 from src.auth import AuthContext, assert_thread_ownership, derive_thread_id, require_auth
-from src.threads import forget_thread, list_threads, load_thread_messages
+from src.threads import active_run, forget_thread, list_threads, load_thread_messages
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,16 @@ async def get_thread_messages(
     await assert_thread_ownership(store, thread_id, auth.user_id)
 
     messages = await load_thread_messages(request.app.state.graph, thread_id)
-    return {"thread_id": client_thread_id, "messages": messages}
+    # `running` es lo que separa «esta conversacion termino asi» de «hay una
+    # respuesta escribiendose ahora mismo que todavia no esta en el
+    # checkpoint». Sin el, quien vuelve a abrir una conversacion con un turno
+    # en curso ve su pregunta sin respuesta y la vuelve a hacer -- que ademas
+    # ahora se la rechazarian con un 409. Ver src/threads/lease.py.
+    return {
+        "thread_id": client_thread_id,
+        "messages": messages,
+        "running": await active_run(store, thread_id) is not None,
+    }
 
 
 @router.delete("/{client_thread_id}", status_code=status.HTTP_204_NO_CONTENT)
