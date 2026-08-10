@@ -138,11 +138,13 @@ def create_spark_agent(
     - Assessment subagent: administers the RIASEC questionnaire conversationally.
     - Matching subagent: calculates affinity and ranks careers.
     - Planning subagent: generates personalized action plans.
-    - Report subagent: writes the orientation report (ADR-019, fase 4).
+    - Report subagent: writes the orientation report (ADR-019, fases 4 y 5).
       The only one that doesn't converse — it produces a document. Its
-      numbers never pass through the model: ``build_orientation_report``
-      re-runs the engine instead of taking figures as parameters (see
-      ``src/tools/report/handler.py``).
+      numbers never pass through the model: ``publish_orientation_report``
+      re-runs the engine instead of taking figures as parameters, and it
+      assembles, uploads and registers in a single call so the assembled
+      report never round-trips through the context either (see
+      ``src/tools/report/handler.py`` and ``publish.py``).
 
     Memory (Sprint 6):
     - ``/memories/AGENTS.md`` is seeded per user on first contact and is

@@ -55,7 +55,7 @@ class TestPromptLoader:
 
     def test_report_loaded(self):
         body = load_prompt("report")
-        assert "build_orientation_report" in body
+        assert "publish_orientation_report" in body
         assert "informe" in body.lower()
 
     def test_metadata_parsed(self):

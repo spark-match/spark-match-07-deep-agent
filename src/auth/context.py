@@ -21,6 +21,15 @@ class AuthContext:
     user_id: str
     email: str = ""
     role: str = ""
+    #: El JWT tal cual llego, para poder reenviarlo al backend en nombre del
+    #: estudiante (ADR-019: el agente registra y cierra el informe). Va vacio
+    #: detras del authorizer de API Gateway, que consume el token y solo
+    #: reenvia los claims.
+    #:
+    #: **No se copia a `AgentContext`**, y esa ausencia es la decision: ese
+    #: contexto viaja por `config["configurable"]` y acaba serializado en el
+    #: checkpoint y en la traza de LangSmith. Ver `src.auth.current_token`.
+    token: str = ""
 
 
 @dataclass(frozen=True, slots=True)

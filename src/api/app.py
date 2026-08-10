@@ -28,6 +28,7 @@ from src.auth import (
     derive_thread_id,
     require_auth,
 )
+from src.auth.current_token import set_request_token
 from src.budget import reset_session_budget, set_active_session
 from src.config import get_settings
 from src.memory import build_reflection_executor
@@ -359,6 +360,18 @@ async def ag_ui_endpoint(
     # thread_ids are isolated by the ContextVar in src.budget.
     set_active_session(thread_id)
     reset_session_budget(thread_id)
+
+    # El JWT del estudiante, para que la herramienta que emite el informe
+    # pueda registrarlo y cerrarlo en el backend en su nombre (ADR-019). Va
+    # por ContextVar y NO por `configurable` de aqui abajo: eso se serializa
+    # en el checkpoint y en la traza de LangSmith, y un JWT ahi es una
+    # credencial de 24 h en un SaaS de terceros. Ver src/auth/current_token.py.
+    #
+    # Sin restaurar al salir, y a proposito: la respuesta es un stream que se
+    # consume despues de que esta funcion retorne, asi que un reset aqui
+    # borraria el token antes de que el grafo lo usara. El aislamiento entre
+    # peticiones lo da la copia de contexto de cada Task, igual que arriba.
+    set_request_token(auth.token)
 
     # Clone the agent so each request gets isolated per-request state,
     # then attach this request's auth context. ag_ui_langgraph forwards
