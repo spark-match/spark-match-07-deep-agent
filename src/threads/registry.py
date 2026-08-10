@@ -38,6 +38,10 @@ MAX_TITLE_LENGTH = 60
 
 DEFAULT_TITLE = "Nueva conversación"
 
+# Marca en la entrada del indice: este titulo lo escribio el estudiante y el
+# relleno automatico no lo toca. Ver `record_thread_activity`.
+TITULO_DEL_USUARIO = "title_set_by_user"
+
 # The store's `asearch` has no ordering guarantee, so "most recent first"
 # has to be done here, which means reading the whole index before paging
 # it. This caps that read. A student with more threads than this keeps
@@ -103,7 +107,16 @@ async def record_thread_activity(
         entry["updated_at"] = now
         # Backfill for entries written before a title could be derived --
         # a turn that arrived with no readable text, say.
-        if not entry.get("title") or entry.get("title") == DEFAULT_TITLE:
+        #
+        # `TITULO_DEL_USUARIO` es lo que salva un titulo escrito a mano. Sin
+        # esa marca, comparar con DEFAULT_TITLE bastaria casi siempre y
+        # fallaria justo en el caso mas facil de dar: el estudiante que
+        # renombra su conversacion a "Nueva conversación" y ve como el
+        # siguiente turno se lo pisa. Un caso raro, pero de los que no tienen
+        # explicacion posible cuando pasan.
+        if not entry.get(TITULO_DEL_USUARIO) and (
+            not entry.get("title") or entry.get("title") == DEFAULT_TITLE
+        ):
             entry["title"] = build_title(title_seed)
     else:
         entry = {
@@ -114,6 +127,62 @@ async def record_thread_activity(
         }
 
     await store.aput(namespace, thread_id, entry)
+
+
+class TituloInvalido(ValueError):
+    """El título propuesto no sirve como etiqueta de conversación."""
+
+
+def limpiar_titulo(propuesto: str) -> str:
+    """Normaliza un título escrito por el estudiante, o falla.
+
+    Mismo colapso de espacios y mismo tope que ``build_title``: el sidebar
+    no distingue de dónde salió un título y no debería tener dos reglas de
+    tamaño. Lo que cambia es qué se hace con lo que no vale — un título
+    automático puede caer al genérico, pero un renombrado vacío es una
+    equivocación de quien lo pidió y se le dice.
+
+    Los caracteres de control se van antes de medir. Son invisibles, así
+    que sin quitarlos un título de dos letras podría ocupar sesenta y
+    llevarse el recorte por delante.
+    """
+    limpio = " ".join(propuesto.split())
+    limpio = "".join(caracter for caracter in limpio if caracter.isprintable())
+
+    if not limpio:
+        raise TituloInvalido("El título no puede estar vacío.")
+    if len(limpio) > MAX_TITLE_LENGTH:
+        raise TituloInvalido(f"El título no puede pasar de {MAX_TITLE_LENGTH} caracteres.")
+    return limpio
+
+
+async def rename_thread(
+    store: BaseStore | None,
+    user_id: str,
+    thread_id: str,
+    titulo: str,
+) -> dict[str, Any] | None:
+    """Pone el título que escribió el estudiante. ``None`` si no hay hilo.
+
+    No mueve ``updated_at``: ese campo ordena el sidebar por actividad de la
+    conversación, y renombrar no es conversar. Si lo moviera, ponerle nombre
+    a un hilo viejo lo mandaría a lo alto de la lista por encima de otro en
+    el que se acaba de hablar.
+    """
+    if store is None:
+        return None
+
+    namespace = thread_index_namespace(user_id)
+    existing = await store.aget(namespace, thread_id)
+    if existing is None or not isinstance(existing.value, dict):
+        return None
+
+    entry = dict(existing.value)
+    entry["title"] = limpiar_titulo(titulo)
+    entry[TITULO_DEL_USUARIO] = True
+    await store.aput(namespace, thread_id, entry)
+
+    return _to_summary(thread_id, entry)
 
 
 def _to_summary(key: str, value: Any) -> dict[str, Any] | None:
@@ -178,9 +247,13 @@ __all__ = [
     "DEFAULT_TITLE",
     "MAX_INDEXED_THREADS",
     "MAX_TITLE_LENGTH",
+    "TITULO_DEL_USUARIO",
+    "TituloInvalido",
     "build_title",
     "forget_thread",
+    "limpiar_titulo",
     "list_threads",
     "record_thread_activity",
+    "rename_thread",
     "thread_index_namespace",
 ]

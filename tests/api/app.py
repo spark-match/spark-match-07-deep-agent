@@ -404,6 +404,70 @@ class TestThreadsApi:
         assert response.status_code == 200
         assert response.json()["messages"] == []
 
+    def _rename(self, client, client_thread_id, token, title):
+        return client.patch(
+            f"/threads/{client_thread_id}",
+            json={"title": title},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def test_renames_a_conversation(self, client):
+        """El titulo automatico sirve para reconocer una conversacion recien
+        tenida, no para encontrarla dentro de tres semanas entre otras diez
+        que empiezan igual."""
+        token = _make_token(user_id="u-rename")
+        self._post_turn(client, "chat-1", token, "hola que tal")
+
+        response = self._rename(client, "chat-1", token, "Mis opciones en Arequipa")
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "Mis opciones en Arequipa"
+
+    def test_the_listing_shows_the_new_name(self, client):
+        token = _make_token(user_id="u-rename2")
+        headers = {"Authorization": f"Bearer {token}"}
+        self._post_turn(client, "chat-1", token, "hola")
+
+        self._rename(client, "chat-1", token, "Becas y costos")
+
+        [thread] = client.get("/threads", headers=headers).json()["threads"]
+        assert thread["title"] == "Becas y costos"
+
+    def test_the_next_turn_does_not_overwrite_it(self, client):
+        token = _make_token(user_id="u-rename3")
+        headers = {"Authorization": f"Bearer {token}"}
+        self._post_turn(client, "chat-1", token, "hola")
+        self._rename(client, "chat-1", token, "Becas y costos")
+
+        self._post_turn(client, "chat-1", token, "otra pregunta")
+
+        [thread] = client.get("/threads", headers=headers).json()["threads"]
+        assert thread["title"] == "Becas y costos"
+
+    def test_never_exposes_the_derived_id_when_renaming(self, client):
+        token = _make_token(user_id="u-rename4")
+        self._post_turn(client, "chat-1", token, "hola")
+
+        body = self._rename(client, "chat-1", token, "Otro nombre").json()
+
+        assert "derived_thread_id" not in body
+        assert body["thread_id"] == "chat-1"
+
+    def test_an_empty_title_is_refused(self, client):
+        token = _make_token(user_id="u-rename5")
+        self._post_turn(client, "chat-1", token, "hola")
+
+        assert self._rename(client, "chat-1", token, "   ").status_code == 422
+
+    def test_a_conversation_that_never_happened_is_a_404(self, client):
+        # No se crea la entrada aqui: se crea al hablar, y esto no es hablar.
+        token = _make_token(user_id="u-rename6")
+
+        assert self._rename(client, "nunca-existio", token, "algo").status_code == 404
+
+    def test_renaming_requires_auth(self, client):
+        assert client.patch("/threads/chat-1", json={"title": "algo"}).status_code == 401
+
     def test_delete_removes_the_conversation_and_its_history(self, client):
         token = _make_token(user_id="u-delete")
         self._post_turn(client, "chat-1", token, "algo que quiero borrar")
