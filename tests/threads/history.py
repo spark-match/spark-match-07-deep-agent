@@ -81,6 +81,31 @@ class TestLoadThreadMessages:
 
         assert [m["role"] for m in messages] == ["user", "assistant"]
 
+    async def test_el_payload_de_una_herramienta_nunca_sale(self, graph):
+        """Es el motivo original del filtro y sigue en pie.
+
+        Los `ToolMessage` llevan resultados de busqueda enteros. Que ahora
+        se rehidrate la ACTIVIDAD no cambia eso: sale el resumen, no lo que
+        devolvio la herramienta.
+        """
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="becas"),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "tc1", "name": "web_search", "args": {"query": "Beca 18"}}],
+                ),
+                ToolMessage(content="RESULTADO CRUDO SECRETO", tool_call_id="tc1"),
+                AIMessage(content="mira esto"),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        assert "RESULTADO CRUDO SECRETO" not in str(messages)
+
     async def test_drops_tool_call_only_assistant_turns(self, graph):
         """Real to the graph, invisible to the conversation."""
         await _seed(
@@ -133,3 +158,250 @@ class TestLoadThreadMessages:
 
     async def test_none_graph_returns_empty(self):
         assert await load_thread_messages(None, "t_1") == []
+
+
+def _llamada(id_: str, nombre: str, **args) -> dict:
+    return {"id": id_, "name": nombre, "args": args}
+
+
+class TestActividadRehidratada:
+    """Al recargar, los chips tienen que volver.
+
+    Sin esto la respuesta queda sin procedencia: el estudiante ve unas
+    cifras y ninguna pista de si salieron del catalogo del MINEDU, de una
+    busqueda en internet o de un especialista -- que es justo lo que decide
+    cuanto fiarse de ellas.
+    """
+
+    async def test_la_actividad_se_cuelga_del_mensaje_que_cierra_el_turno(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="qué carreras hay"),
+                AIMessage(content="", tool_calls=[_llamada("tc1", "search_careers", query="ing")]),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                AIMessage(content="encontré estas"),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        assert "activity" not in messages[0]
+        assert [a["tool"] for a in messages[1]["activity"]] == ["search_careers"]
+
+    async def test_se_ve_que_se_busco_en_cada_consulta(self, graph):
+        """Es lo que hace util desplegar «6 consultas al catálogo»."""
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="opciones"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        _llamada("tc1", "search_careers", query="ingeniería"),
+                        _llamada("tc2", "search_careers", query="gestión"),
+                    ],
+                ),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                ToolMessage(content="[...]", tool_call_id="tc2"),
+                AIMessage(content="esto encontré"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert [a["subject"] for a in actividad] == ["ingeniería", "gestión"]
+
+    async def test_dos_especialistas_salen_los_dos(self, graph):
+        # El caso que motivo desplegar el resumen: si se llamo a dos, se
+        # tienen que poder ver los dos y cuales fueron.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        _llamada("tc1", "task", subagent_type="matching", description="prompt"),
+                        _llamada("tc2", "task", subagent_type="planning", description="prompt"),
+                    ],
+                ),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                ToolMessage(content="[...]", tool_call_id="tc2"),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert [a["subagent"] for a in actividad] == ["matching", "planning"]
+
+    async def test_el_prompt_interno_del_especialista_no_sale(self, graph):
+        """`description` es la instruccion que el coordinador le redacta al
+        subagente: un prompt interno. Mismo criterio que subagent_events."""
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        _llamada(
+                            "tc1",
+                            "task",
+                            subagent_type="matching",
+                            description="INSTRUCCION INTERNA QUE NO DEBE SALIR",
+                        )
+                    ],
+                ),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        assert "INSTRUCCION INTERNA" not in str(messages)
+
+    async def test_una_herramienta_fuera_de_la_lista_blanca_no_trae_asunto(self, graph):
+        # La lista es blanca a proposito: una herramienta nueva no filtra
+        # sus argumentos por el mero hecho de existir.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="hola"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "manage_prefs", content="dato personal")],
+                ),
+                ToolMessage(content="ok", tool_call_id="tc1"),
+                AIMessage(content="anotado"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert actividad[0]["tool"] == "manage_prefs"
+        assert "subject" not in actividad[0]
+        assert "dato personal" not in str(actividad)
+
+    async def test_un_asunto_larguisimo_se_recorta(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="hola"),
+                AIMessage(content="", tool_calls=[_llamada("tc1", "web_search", query="x" * 300)]),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                AIMessage(content="ya"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert len(actividad[0]["subject"]) <= 80
+
+    async def test_un_fallo_de_herramienta_se_marca(self, graph):
+        # Un turno donde la busqueda fallo y otro donde no se distinguen
+        # solo por esto.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="busca"),
+                AIMessage(content="", tool_calls=[_llamada("tc1", "web_search", query="beca")]),
+                ToolMessage(content="boom", tool_call_id="tc1", status="error"),
+                AIMessage(content="no pude"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert actividad[0]["ok"] is False
+
+    async def test_una_herramienta_que_fue_bien_se_marca(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="busca"),
+                AIMessage(content="", tool_calls=[_llamada("tc1", "web_search", query="beca")]),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                AIMessage(content="mira"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert actividad[0]["ok"] is True
+
+    async def test_los_chips_van_sobre_la_respuesta_y_no_sobre_el_preambulo(self, graph):
+        """Anthropic emite a veces texto y llamadas en el mismo mensaje.
+
+        Ese texto es preambulo ("déjame revisar el catálogo") y el turno
+        sigue. Colgarle ahi los chips los pondria sobre la frase
+        equivocada.
+        """
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="qué hay"),
+                AIMessage(
+                    content="Déjame revisar el catálogo.",
+                    tool_calls=[_llamada("tc1", "search_careers", query="ing")],
+                ),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                AIMessage(content="Encontré estas tres."),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        preambulo = next(m for m in messages if m["content"].startswith("Déjame"))
+        respuesta = next(m for m in messages if m["content"].startswith("Encontré"))
+        assert "activity" not in preambulo
+        assert len(respuesta["activity"]) == 1
+
+
+class TestTurnosCortados:
+    """Cerrar la pestaña a mitad deja llamadas sin respuesta detras."""
+
+    async def test_un_turno_sin_cerrar_no_deja_chips_sueltos(self, graph):
+        # Un chip solo, sin mensaje debajo, parece un fallo de la app mas
+        # que un turno interrumpido.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="busca"),
+                AIMessage(content="", tool_calls=[_llamada("tc1", "search_careers", query="ing")]),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                HumanMessage(content="mejor otra cosa"),
+                AIMessage(content="claro"),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        assert all("activity" not in m for m in messages)
+
+    async def test_un_turno_cortado_al_final_tampoco(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="busca"),
+                AIMessage(content="", tool_calls=[_llamada("tc1", "search_careers", query="ing")]),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        assert all("activity" not in m for m in messages)
