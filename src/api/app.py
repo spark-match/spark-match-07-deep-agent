@@ -1,5 +1,7 @@
 """FastAPI application with AG-UI streaming endpoint."""
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -7,7 +9,7 @@ from contextlib import asynccontextmanager
 from ag_ui.core.events import EventType, RunErrorEvent
 from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.endpoint import EventEncoder, RunAgentInput
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -31,7 +33,7 @@ from src.config import get_settings
 from src.memory import build_reflection_executor
 from src.observability.langsmith import configure_langsmith
 from src.persistence import build_persistence
-from src.threads import record_thread_activity
+from src.threads import acquire_run_lease, record_thread_activity, release_run_lease
 from src.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -310,6 +312,26 @@ async def ag_ui_endpoint(
     await assert_thread_ownership(store, thread_id, auth.user_id)
     input_data.thread_id = thread_id
 
+    # Un turno a la vez por conversacion. Sin esto, dos pestañas abiertas
+    # sobre el mismo hilo corren las dos y se pisan EN SILENCIO: el
+    # checkpointer no tiene control de concurrencia ninguno, asi que las dos
+    # leen el mismo estado, las dos escriben, y los mensajes de la que
+    # termine antes dejan de estar en el camino desde la cabeza. Ver
+    # src/threads/lease.py.
+    #
+    # Antes de indexar y no despues, por la misma razon por la que indexar va
+    # despues del ownership: un turno rechazado no debe escribir nada. Con el
+    # orden al reves, el 409 movia igualmente la conversacion a lo alto del
+    # sidebar por un turno que no llego a existir.
+    lease = await acquire_run_lease(
+        store, thread_id, input_data.run_id, settings.run_lease_ttl_seconds
+    )
+    if lease is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "A turn is already running on this conversation.",
+        )
+
     # Index the conversation so it can be listed later. Runs on every turn,
     # not just the first: `updated_at` is what orders the sidebar. Done
     # after the ownership check so a rejected request never writes.
@@ -367,6 +389,16 @@ async def ag_ui_endpoint(
             yield encoder.encode(
                 RunErrorEvent(message=STREAM_FAILURE_MESSAGE, code="agent_stream_failed")
             )
+        finally:
+            # Tambien cuando el cliente se va. Ese camino entra por
+            # CancelledError, que no pasa por el `except Exception` de
+            # arriba, y sin esto la conversacion se quedaria bloqueada
+            # hasta que expirara el arrendamiento: el estudiante cierra la
+            # pestaña, vuelve a entrar, y no puede escribir en cinco
+            # minutos. El `shield` es porque estamos EN la cancelacion y un
+            # await desnudo aqui volveria a cancelarse antes de soltar.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(release_run_lease(store, thread_id, lease.run_id))
 
     return StreamingResponse(
         # Wrapped so a long silence inside a turn (classifier call, main
