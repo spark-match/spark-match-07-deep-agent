@@ -17,10 +17,19 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 
 from src.auth import AuthContext, assert_thread_ownership, derive_thread_id, require_auth
-from src.threads import active_run, forget_thread, list_threads, load_thread_messages
+from src.threads import (
+    MAX_TITLE_LENGTH,
+    TituloInvalido,
+    active_run,
+    forget_thread,
+    list_threads,
+    load_thread_messages,
+    rename_thread,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +77,49 @@ async def get_thread_messages(
         "messages": messages,
         "running": await active_run(store, thread_id) is not None,
     }
+
+
+class RenombrarConversacion(BaseModel):
+    """Cuerpo de ``PATCH /threads/{id}``."""
+
+    # El tope de verdad lo pone `limpiar_titulo`, que primero colapsa los
+    # espacios: sin eso, sesenta espacios y una letra serian un titulo
+    # rechazado por largo cuando en realidad mide uno. Aqui solo se acota lo
+    # que se acepta leer, para no cargar en memoria una cadena enorme antes
+    # de mirarla.
+    title: str = Field(max_length=MAX_TITLE_LENGTH * 10)
+
+
+@router.patch("/{client_thread_id}")
+async def rename_thread_endpoint(
+    client_thread_id: str,
+    body: RenombrarConversacion,
+    request: Request,
+    auth: Annotated[AuthContext, Depends(require_auth)],
+) -> dict[str, Any]:
+    """Cambia el nombre de una conversación.
+
+    El titulo automatico es el primer mensaje recortado, y eso sirve para
+    reconocer una conversacion recien tenida, no para encontrarla dentro de
+    tres semanas entre otras diez que empiezan igual.
+    """
+    store = request.app.state.store
+    thread_id = derive_thread_id(auth.user_id, client_thread_id)
+    await assert_thread_ownership(store, thread_id, auth.user_id)
+
+    try:
+        renombrada = await rename_thread(store, auth.user_id, thread_id, body.title)
+    except TituloInvalido as invalido:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(invalido)) from invalido
+
+    if renombrada is None:
+        # Una conversacion sin entrada en el indice es una que nunca tuvo un
+        # turno. No hay nada que renombrar, y decir 404 es mas honesto que
+        # crear la entrada aqui: se creo al hablar, y esto no es hablar.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Esa conversación no existe.")
+
+    renombrada.pop("derived_thread_id", None)
+    return renombrada
 
 
 @router.delete("/{client_thread_id}", status_code=status.HTTP_204_NO_CONTENT)

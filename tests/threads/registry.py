@@ -7,10 +7,13 @@ from src.auth.thread_guard import THREAD_OWNER_NAMESPACE, derive_thread_id
 from src.threads.registry import (
     DEFAULT_TITLE,
     MAX_TITLE_LENGTH,
+    TituloInvalido,
     build_title,
     forget_thread,
+    limpiar_titulo,
     list_threads,
     record_thread_activity,
+    rename_thread,
     thread_index_namespace,
 )
 
@@ -165,3 +168,128 @@ class TestForgetThread:
 
     async def test_none_store_is_a_noop(self):
         await forget_thread(None, "u1", "t_abc")
+
+
+class TestLimpiarTitulo:
+    """Un renombrado que no vale se le dice a quien lo pidio.
+
+    `build_title` puede caer al generico porque nadie eligio ese titulo; un
+    renombrado vacio es una equivocacion de alguien, y tragarsela dejaria al
+    estudiante mirando por que no cambio nada.
+    """
+
+    def test_colapsa_los_espacios_como_el_titulo_automatico(self):
+        assert limpiar_titulo("  mis   carreras  ") == "mis carreras"
+
+    @pytest.mark.parametrize("propuesto", ["", "   ", "\n\t"])
+    def test_rechaza_un_titulo_sin_contenido(self, propuesto):
+        with pytest.raises(TituloInvalido):
+            limpiar_titulo(propuesto)
+
+    def test_rechaza_uno_mas_largo_que_el_tope(self):
+        with pytest.raises(TituloInvalido):
+            limpiar_titulo("x" * (MAX_TITLE_LENGTH + 1))
+
+    def test_acepta_justo_el_tope(self):
+        assert len(limpiar_titulo("x" * MAX_TITLE_LENGTH)) == MAX_TITLE_LENGTH
+
+    def test_mide_despues_de_colapsar_y_no_antes(self):
+        # Sesenta espacios y una letra miden uno, no sesenta y uno. Sin
+        # colapsar primero, esto se rechazaria por largo.
+        assert limpiar_titulo(" " * 60 + "a") == "a"
+
+    def test_quita_los_caracteres_invisibles(self):
+        # Ocupan sitio en el tope sin verse, asi que un titulo de dos letras
+        # podria llegar a sesenta y llevarse el recorte por delante. Con
+        # escapes y no pegados tal cual: un caracter invisible en el codigo
+        # fuente de un test sobre caracteres invisibles no se puede leer.
+        assert limpiar_titulo("be\u200bcas\x07") == "becas"
+
+
+class TestRenameThread:
+    async def test_pone_el_titulo_que_escribio_el_estudiante(self, store):
+        await record_thread_activity(store, "u1", "t_1", "client-1", "hola que tal")
+
+        renombrada = await rename_thread(store, "u1", "t_1", "Mis opciones en Arequipa")
+
+        assert renombrada is not None
+        assert renombrada["title"] == "Mis opciones en Arequipa"
+
+    async def test_devuelve_el_id_del_cliente_y_no_el_derivado(self, store):
+        await record_thread_activity(store, "u1", "t_1", "client-1", "hola")
+
+        renombrada = await rename_thread(store, "u1", "t_1", "Otro nombre")
+
+        assert renombrada is not None
+        assert renombrada["thread_id"] == "client-1"
+
+    async def test_el_listado_lo_refleja(self, store):
+        await record_thread_activity(store, "u1", "t_1", "client-1", "hola")
+
+        await rename_thread(store, "u1", "t_1", "Becas y costos")
+
+        [thread] = await list_threads(store, "u1")
+        assert thread["title"] == "Becas y costos"
+
+    async def test_el_siguiente_turno_no_lo_pisa(self, store):
+        await record_thread_activity(store, "u1", "t_1", "client-1", "hola")
+        await rename_thread(store, "u1", "t_1", "Becas y costos")
+
+        await record_thread_activity(store, "u1", "t_1", "client-1", "otra pregunta")
+
+        [thread] = await list_threads(store, "u1")
+        assert thread["title"] == "Becas y costos"
+
+    async def test_renombrar_al_titulo_generico_tambien_se_respeta(self, store):
+        """El caso que obliga a la marca, y el que no tiene explicacion
+        posible cuando pasa: sin ella, comparar con DEFAULT_TITLE bastaria
+        casi siempre y fallaria justo aqui."""
+        await record_thread_activity(store, "u1", "t_1", "client-1", title_seed=None)
+
+        await rename_thread(store, "u1", "t_1", DEFAULT_TITLE)
+        await record_thread_activity(store, "u1", "t_1", "client-1", "ya hay texto")
+
+        [thread] = await list_threads(store, "u1")
+        assert thread["title"] == DEFAULT_TITLE
+
+    async def test_sin_renombrar_el_relleno_sigue_funcionando(self, store):
+        # La marca no puede romper el backfill de una entrada que nacio sin
+        # texto que leer.
+        await record_thread_activity(store, "u1", "t_1", "client-1", title_seed=None)
+
+        await record_thread_activity(store, "u1", "t_1", "client-1", "ya hay texto")
+
+        [thread] = await list_threads(store, "u1")
+        assert thread["title"] == "ya hay texto"
+
+    async def test_no_mueve_la_conversacion_en_el_sidebar(self, store):
+        # `updated_at` ordena por actividad de la conversacion, y renombrar
+        # no es conversar: si lo moviera, ponerle nombre a un hilo viejo lo
+        # mandaria por encima de otro en el que se acaba de hablar.
+        await record_thread_activity(store, "u1", "t_1", "client-1", "hola")
+        [antes] = await list_threads(store, "u1")
+
+        await rename_thread(store, "u1", "t_1", "Otro nombre")
+
+        [despues] = await list_threads(store, "u1")
+        assert despues["updated_at"] == antes["updated_at"]
+
+    async def test_un_hilo_que_nunca_tuvo_un_turno_no_existe(self, store):
+        assert await rename_thread(store, "u1", "t_desconocido", "algo") is None
+
+    async def test_el_hilo_de_otro_usuario_no_existe_para_este(self, store):
+        await record_thread_activity(store, "u1", "t_1", "client-1", "hola")
+
+        assert await rename_thread(store, "u2", "t_1", "algo") is None
+
+    async def test_none_store_is_a_noop(self):
+        assert await rename_thread(None, "u1", "t_1", "algo") is None
+
+    async def test_un_titulo_invalido_no_toca_lo_guardado(self, store):
+        await record_thread_activity(store, "u1", "t_1", "client-1", "hola")
+
+        with pytest.raises(TituloInvalido):
+            await rename_thread(store, "u1", "t_1", "   ")
+
+        [thread] = await list_threads(store, "u1")
+        assert thread["title"] == "hola"
