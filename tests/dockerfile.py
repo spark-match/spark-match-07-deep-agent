@@ -173,6 +173,51 @@ class TestDockerfileStructure:
             f"entry point), got: {cmd_lines!r}"
         )
 
+    def test_runtime_installs_weasyprint_system_libraries(self, dockerfile_text: str) -> None:
+        """ADR-019 D11: sin estas bibliotecas, el informe en PDF no se genera.
+
+        Este test existe porque el fallo que previene es INVISIBLE. WeasyPrint
+        se importa dentro de la funcion (`src/reports/pdf.py`) a proposito,
+        para que a una imagen sin pango no se le caiga el contenedor entero;
+        el efecto secundario es que una imagen rota **arranca, conversa y
+        recomienda con normalidad**, y nadie se entera hasta que un estudiante
+        pide su informe. Esa capa `apt-get` es exactamente el tipo de linea
+        que se borra al adelgazar una imagen.
+        """
+        requeridas = (
+            "libpango-1.0-0",
+            "libpangoft2-1.0-0",
+            "libcairo2",
+            "libgdk-pixbuf-2.0-0",
+        )
+        faltan = [lib for lib in requeridas if lib not in dockerfile_text]
+        assert not faltan, (
+            f"al Dockerfile le faltan bibliotecas que WeasyPrint carga por FFI: {faltan}. "
+            "Sin ellas el agente arranca igual y solo falla al generar un informe en PDF "
+            "-- ver src/reports/pdf.py y ADR-019 D11."
+        )
+
+    def test_runtime_installs_the_product_typeface(self, dockerfile_text: str) -> None:
+        """La web trae Inter de Google Fonts; el contenedor no puede.
+
+        Sin la fuente en la imagen, WeasyPrint no falla: cae a la sustituta
+        del sistema y el PDF sale con otra tipografia. Es un fallo silencioso
+        y cosmetico, del tipo que nadie reporta y todo el mundo nota.
+        """
+        assert "fonts-inter" in dockerfile_text, (
+            "el Dockerfile no instala `fonts-inter`, la tipografia del producto. "
+            "El PDF se renderizaria con la fuente por defecto del sistema sin avisar "
+            "-- ver la cabecera de src/reports/report.css."
+        )
+
+    def test_apt_layer_cleans_its_package_lists(self, dockerfile_text: str) -> None:
+        """Un `apt-get update` sin limpiar deja ~40 MB de indices en la capa."""
+        if "apt-get install" not in dockerfile_text:
+            pytest.skip("no hay capa apt en el Dockerfile")
+        assert "rm -rf /var/lib/apt/lists/*" in dockerfile_text, (
+            "la capa apt no borra /var/lib/apt/lists/*, que se queda dentro de la imagen"
+        )
+
     def test_uv_sync_pins_to_lockfile(self, dockerfile_text: str) -> None:
         """Sprint 10.A + ROADMAP 8.7: builds must be reproducible.
         `--frozen` pins to uv.lock and rejects drift."""

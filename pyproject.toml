@@ -56,6 +56,18 @@ dependencies = [
     # installing and introspecting the real package, not assumed from
     # (outdated) docs.
     "mcp>=2.0",
+    # Renderizado del informe (ADR-019, D11): Markdown -> HTML -> PDF.
+    #
+    # `weasyprint` NO es Python puro: carga pango, cairo y gdk-pixbuf por FFI,
+    # asi que la imagen de runtime tiene que traerlas (ver Dockerfile). Por eso
+    # `src/reports/pdf.py` la importa dentro de la funcion y no arriba -- una
+    # imagen a la que le falte una de esas bibliotecas tiene que perder el PDF,
+    # no dejar de arrancar.
+    #
+    # Va aqui y no en el backend porque Lambda no tiene esas bibliotecas; el
+    # agente corre en Fargate, que si.
+    "weasyprint>=63.0",
+    "markdown-it-py>=3.0",
 ]
 
 [build-system]
@@ -128,6 +140,10 @@ module = [
     "deepagents.*",
     "slowapi",
     "slowapi.*",
+    # WeasyPrint no publica `py.typed`. Solo se tocan dos simbolos suyos
+    # (`HTML` y `CSS`) y en un unico fichero, `src/reports/pdf.py`.
+    "weasyprint",
+    "weasyprint.*",
 ]
 ignore_missing_imports = true
 
@@ -141,4 +157,8 @@ dev = [
     "types-pyyaml>=6.0.12.20260518",
     "types-cachetools>=5.5",
     "boto3-stubs[secretsmanager,ssm]>=1.40",
+    # Solo para leer de vuelta el PDF que genera WeasyPrint y comprobar que el
+    # texto y las cifras sobrevivieron a las tres conversiones (ADR-019, D11).
+    # No entra en runtime: el agente escribe PDF, no los lee.
+    "pypdf>=5.1",
 ]
