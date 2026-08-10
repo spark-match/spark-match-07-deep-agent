@@ -69,7 +69,13 @@ from langgraph.types import Command
 # Mismo resultado que el patron anterior en 60 367 casos de prueba
 # (fijos, aleatorios y exhaustivos hasta longitud 4). Ver
 # tests/agent/pii.py::TestEmailRegexComplexity.
-_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]++@[\w-]++\.[a-zA-Z]{2,}")
+#
+# El NOSONAR silencia python:S8786, que marca este patron como vulnerable a
+# backtracking. Es un falso positivo: el analizador no interpreta los
+# cuantificadores posesivos (`++`), que son precisamente la cura de lo que
+# denuncia. Silenciarlo no tapa nada — la complejidad esta medida en el test
+# citado arriba, y ese test es lo que se rompe si alguien degrada el patron.
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]++@[\w-]++\.[a-zA-Z]{2,}")  # NOSONAR
 
 # Peru DNI: 8 digits, only redacted when a recognizable identity-document
 # context word appears nearby. A bare 8-digit number is too ambiguous

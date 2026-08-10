@@ -27,8 +27,18 @@ logger = logging.getLogger(__name__)
 # so it works both in local dev and in AgentCore containers.
 PROMPTS_DIR = Path(__file__).resolve().parent
 
-# Frontmatter delimiter.
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
+# Linea delimitadora del frontmatter: `---` sola en su linea (se toleran
+# espacios a la derecha, no a la izquierda).
+#
+# Se PARTE el fichero por el delimitador en vez de capturar el bloque entero
+# con `^---\s*\n(.*?)\n---\s*\n(.*)$`. Aquel patron es cuadratico en cuanto un
+# fichero abre frontmatter y no lo cierra: el `.*?` perezoso avanza caracter a
+# caracter buscando un cierre que no existe, y reintenta el resto del patron
+# en cada posicion. Hoy no lo muerde nadie —solo se leen los .md que viajan
+# dentro del paquete, ninguno llega de fuera— pero un parser de ficheros no es
+# el sitio donde dejar puesta esa forma, sobre todo cuando la alternativa es
+# mas corta. `split` recorre el texto una vez.
+_DELIMITER_RE = re.compile(r"^---[^\S\n]*$", re.MULTILINE)
 
 
 class PromptMetadata(TypedDict):
@@ -47,12 +57,18 @@ def _parse_prompt_file(path: Path) -> tuple[PromptMetadata, str]:
     the frontmatter is malformed.
     """
     text = path.read_text(encoding="utf-8")
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
+
+    # maxsplit=2: un `---` mas abajo es contenido del prompt (una regla
+    # horizontal en markdown), no un tercer delimitador.
+    parts = _DELIMITER_RE.split(text, maxsplit=2)
+
+    # Hay frontmatter solo si aparecen los dos delimitadores y el primero abre
+    # el fichero. Sin cierre —o sin delimitadores— el fichero es todo cuerpo.
+    if len(parts) < 3 or parts[0]:
         # Allow prompts without frontmatter (return empty metadata).
         return PromptMetadata(audience="", loaded_by="", versioned=False), text
 
-    fm_text, body = match.group(1), match.group(2)
+    fm_text, body = parts[1], parts[2]
     try:
         raw_meta: Any = yaml.safe_load(fm_text) or {}
     except yaml.YAMLError as exc:

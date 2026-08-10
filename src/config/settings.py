@@ -34,7 +34,11 @@ class Environment(StrEnum):
 class LogLevel(StrEnum):
     """Logging verbosity levels."""
 
-    DEBUG = "DEBUG"
+    # El NOSONAR silencia python:S4507, que avisa de codigo de depuracion
+    # entregado en produccion. Falso positivo: esto no enciende ningun modo
+    # debug, es el nombre de un nivel de logging del modulo `logging` de la
+    # libreria estandar. Quitar el miembro seria quitar un nivel que existe.
+    DEBUG = "DEBUG"  # NOSONAR
     INFO = "INFO"
     WARNING = "WARNING"
     ERROR = "ERROR"

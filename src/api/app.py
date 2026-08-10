@@ -151,9 +151,21 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if docs_enabled else None,
     )
 
+    # Security response headers (task 7.E.2) — added to every response.
+    app.add_middleware(SecurityHeadersMiddleware)
+
     # CORS — allow Angular frontend. Origins are validated at startup
     # (Settings._validate_cors_origins, task 7.E.1): a wildcard combined
     # with allow_credentials=True is rejected before the app even starts.
+    #
+    # VA EL ULTIMO A PROPOSITO, y no es estilo. `add_middleware` inserta al
+    # PRINCIPIO de la pila, asi que el ultimo en añadirse es el que queda mas
+    # afuera. Con CORS añadido primero quedaba por DENTRO de los demas: si algo
+    # reventaba en una capa exterior, la respuesta salia sin
+    # `Access-Control-Allow-Origin` y el navegador la presentaba como un fallo
+    # de CORS. El error real —un 500, un middleware roto— quedaba tapado detras
+    # de un mensaje que apunta al sitio equivocado, que es la peor forma de
+    # perder una tarde. Cualquier middleware nuevo va ENCIMA de este bloque.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -161,9 +173,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Security response headers (task 7.E.2) — added to every response.
-    app.add_middleware(SecurityHeadersMiddleware)
 
     # Rate limiting (task 7.E.3) — per-user_id (falls back to IP) burst
     # limiter on the costliest endpoint. slowapi raises RateLimitExceeded,
