@@ -15,11 +15,21 @@ from src.reports.pdf import (
     pdf_rendering_available,
     report_to_pdf,
 )
+from src.reports.storage import (
+    InformeGuardado,
+    ObjetoGuardado,
+    resolve_reports_bucket,
+    upload_report,
+)
 
 __all__ = [
+    "InformeGuardado",
+    "ObjetoGuardado",
     "PdfRenderingUnavailableError",
     "pdf_rendering_available",
     "report_to_html",
     "report_to_markdown",
     "report_to_pdf",
+    "resolve_reports_bucket",
+    "upload_report",
 ]
