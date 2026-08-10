@@ -8,6 +8,8 @@ no los de la maquetacion.
 
 from __future__ import annotations
 
+from datetime import date
+
 from src.models.report import OrientationReport, ReportCareer
 
 BREAKDOWN = {
@@ -66,7 +68,8 @@ def informe(**overrides: object) -> OrientationReport:
         "filters_applied": ["region"],
         "candidates_without_each_filter": {"region": 6208},
         "scoring_version": "1.0.0",
-        "source": "Ponte en Carrera (MINEDU), corte del 2026-06-13",
+        "dataset_source": "Ponte en Carrera (MINEDU)",
+        "dataset_snapshot_date": date(2026, 6, 13),
     }
     base.update(overrides)
     return OrientationReport(**base)  # type: ignore[arg-type]

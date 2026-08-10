@@ -27,10 +27,11 @@ deliberada.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from src.models.report import OrientationReport, ReportCareer
-from src.tools.programs.loader import normalize
+from src.tools.programs.loader import DATASET_NAME, SNAPSHOT_DATE, normalize
 from src.tools.recommendation.handler import MAX_TOP_N, recommend_programs_handler
 
 # Un informe con una sola carrera no es una orientacion, es una apuesta; y por
@@ -172,8 +173,13 @@ def build_orientation_report_handler(
             filters_applied=datos["filters_applied"],
             candidates_without_each_filter=datos["candidates_without_each_filter"],
             scoring_version=datos["scoring_version"],
-            source=datos["source"],
-        ).model_dump(),
+            # Del modulo que carga el catalogo, no de `datos["source"]`. Esa
+            # clave es la etiqueta de una linea que se ensena en el chat, y
+            # aqui hacen falta las dos piezas por separado. Salen del mismo
+            # sitio que la etiqueta, asi que no pueden contradecirla.
+            dataset_source=DATASET_NAME,
+            dataset_snapshot_date=date.fromisoformat(SNAPSHOT_DATE),
+        ).model_dump(mode="json"),
         "errors": None,
     }
 

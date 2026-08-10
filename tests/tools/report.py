@@ -8,8 +8,10 @@ sobre su salida.
 """
 
 import inspect
+import json
 
-from src.models.report import OrientationReport
+from src.models.report import SCHEMA_VERSION, OrientationReport
+from src.tools.programs.loader import DATASET_NAME, SNAPSHOT_DATE
 from src.tools.recommendation.handler import MAX_TOP_N, recommend_programs_handler
 from src.tools.report.handler import MIN_CAREERS, build_orientation_report_handler
 
@@ -237,7 +239,32 @@ class TestProcedencia:
         datos = _informe()["data"]
 
         assert datos["scoring_version"]
-        assert datos["source"]
+        assert datos["dataset_source"]
+        assert datos["dataset_snapshot_date"]
+
+    def test_el_origen_va_partido_en_nombre_y_fecha(self):
+        """La fila del backend guarda los dos en columnas distintas (D3).
+
+        Si volvieran juntos en un texto libre, el backend tendria que sacar la
+        fecha con una expresion regular y llenarse de nulos el dia que cambie
+        la redaccion.
+        """
+        datos = _informe()["data"]
+
+        assert datos["dataset_source"] == DATASET_NAME
+        assert "2026" not in datos["dataset_source"]
+        assert datos["dataset_snapshot_date"] == SNAPSHOT_DATE
+
+    def test_la_fecha_sale_serializable(self):
+        """El resultado de una herramienta acaba en JSON; un `date` no cabe."""
+        datos = _informe()["data"]
+
+        assert isinstance(datos["dataset_snapshot_date"], str)
+        json.dumps(datos)
+
+    def test_el_informe_dice_de_que_version_es_su_forma(self):
+        """Se relee meses despues, cuando el codigo que lo escribio ya no esta."""
+        assert _informe()["data"]["schema_version"] == SCHEMA_VERSION
 
     def test_guarda_cuanto_recortaba_cada_filtro(self):
         # Quien lo lea meses despues tiene que ver que el resultado dependia de

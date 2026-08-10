@@ -38,7 +38,12 @@ DATASET_PATH = Path(__file__).resolve().parents[3] / "data" / "programs" / "prog
 # ingesta esta congelada, asi que este dato no se refresca solo y decir
 # "datos oficiales" a secas seria omitir que tienen fecha.
 SNAPSHOT_DATE = "2026-06-13"
-SOURCE_LABEL = f"Ponte en Carrera (MINEDU), datos del {SNAPSHOT_DATE}"
+
+# El nombre del catalogo, aparte de la etiqueta. La fila del informe guarda
+# origen y fecha en columnas distintas (ADR-019, D3); la etiqueta de abajo es
+# para leerla en el chat. Las dos salen de aqui para que no puedan discrepar.
+DATASET_NAME = "Ponte en Carrera (MINEDU)"
+SOURCE_LABEL = f"{DATASET_NAME}, datos del {SNAPSHOT_DATE}"
 
 
 class Program(TypedDict):
@@ -247,6 +252,7 @@ def reload_careers(path: Path | None = None) -> list[CareerEntry]:
 
 
 __all__ = [
+    "DATASET_NAME",
     "DATASET_PATH",
     "SNAPSHOT_DATE",
     "SOURCE_LABEL",

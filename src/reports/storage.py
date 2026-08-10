@@ -125,7 +125,11 @@ def upload_report(user_id: str, report_id: str, informe: OrientationReport) -> I
     """
     # Primero renderizar. Si esto falla, el bucket se queda como estaba.
     pdf = report_to_pdf(informe)
-    cuerpo_json = json.dumps(informe.model_dump(), ensure_ascii=False, indent=2).encode("utf-8")
+    # `mode="json"` y no el volcado a secas: el informe lleva una fecha, y un
+    # `date` de Python no lo sabe serializar `json.dumps`.
+    cuerpo_json = json.dumps(informe.model_dump(mode="json"), ensure_ascii=False, indent=2).encode(
+        "utf-8"
+    )
 
     bucket = resolve_reports_bucket()
     base = f"{PREFIJO}/{user_id}/{report_id}"
