@@ -8,12 +8,14 @@ with ``skills_metadata`` and ``memory_contents`` and no messages at all. A
 fake ``aget_state`` would have happily agreed with the broken code.
 """
 
+from typing import Any
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 
-from src.threads.history import load_thread_messages
+from src.threads.history import _ASUNTO_POR_HERRAMIENTA, load_thread_messages
 
 
 @pytest.fixture
@@ -405,3 +407,63 @@ class TestTurnosCortados:
         messages = await load_thread_messages(graph, "t_1")
 
         assert all("activity" not in m for m in messages)
+
+
+class TestLaListaBlancaApuntaAArgumentosReales:
+    """El mapa de asuntos es una copia a mano de firmas que estan en otro sitio.
+
+    Y ya se habia desincronizado: la entrada de `search_programs` pedia un
+    `query` que esa herramienta no tiene ni ha tenido nunca --busca por
+    `career`--, asi que sus chips salian sin asunto. El fallo es silencioso
+    por construccion, porque un argumento ausente y un argumento vacio se
+    leen igual desde `args.get(...)`, y por eso hace falta una prueba y no
+    releer el mapa con cuidado.
+    """
+
+    @staticmethod
+    def _herramientas() -> dict[str, Any]:
+        # Importadas aqui y no arriba para que el resto del fichero --que va
+        # de rehidratar-- no dependa del catalogo ni de la busqueda web.
+        from src.tools.catalog.tool import search_careers
+        from src.tools.programs.tool import search_programs
+        from src.tools.recommendation.tool import recommend_programs
+        from src.tools.web_search.tool import web_search
+
+        # Por `tool.name` y no por una clave escrita a mano: lo que viaja en
+        # la tool call es ese nombre, asi que es el mismo con el que el mapa
+        # tiene que casar.
+        catalogo = (search_careers, search_programs, recommend_programs, web_search)
+        return {t.name: t for t in catalogo}
+
+    def test_cada_entrada_nombra_una_herramienta_que_existe(self):
+        herramientas = self._herramientas()
+
+        assert set(_ASUNTO_POR_HERRAMIENTA) <= set(herramientas)
+
+    def test_cada_entrada_nombra_un_argumento_que_existe(self):
+        herramientas = self._herramientas()
+
+        for nombre, campo in _ASUNTO_POR_HERRAMIENTA.items():
+            argumentos = herramientas[nombre].args
+            assert campo in argumentos, f"{nombre} no tiene un argumento {campo!r}"
+
+    async def test_de_search_programs_se_ve_la_carrera_que_busco(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="dónde estudio eso"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        _llamada("tc1", "search_programs", career="Ingeniería Industrial", limit=5)
+                    ],
+                ),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                AIMessage(content="en estas universidades"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert actividad[0]["subject"] == "Ingeniería Industrial"

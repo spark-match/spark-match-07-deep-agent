@@ -51,9 +51,16 @@ _HERRAMIENTA_DE_DELEGACION = "task"
 # Que argumento de cada herramienta se puede enseñar. Lista BLANCA: lo que
 # no este aqui no sale, aunque la herramienta sea nueva. Un `dict` abierto
 # acabaria filtrando el primer argumento sensible que alguien añada.
+#
+# Los nombres tienen que existir de verdad en la firma de la herramienta, y
+# eso no se puede dejar al ojo: este mapa nacio con `search_programs: query`
+# y esa herramienta no tiene ningun `query` -- busca por `career`. La entrada
+# no fallaba, que es lo peor que podia hacer: `args.get("query")` devolvia
+# None y el chip salia sin asunto, indistinguible de una llamada sin nada que
+# enseñar. Lo cubre `TestLaListaBlancaApuntaAArgumentosReales`.
 _ASUNTO_POR_HERRAMIENTA: dict[str, str] = {
     "search_careers": "query",
-    "search_programs": "query",
+    "search_programs": "career",
     "web_search": "query",
     "recommend_programs": "riasec_code",
 }
