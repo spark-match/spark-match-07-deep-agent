@@ -159,6 +159,22 @@ class Settings(BaseSettings):
     # codigo por ambiente.
     reports_bucket_ssm_param: str = "/spark-match/dev/config/reports-bucket"
 
+    # URL base de la API de informes de spark-match-03-backend, sin barra
+    # final. El agente la necesita para registrar y cerrar cada informe
+    # (ADR-019, enmienda de D4).
+    #
+    # Por variable de entorno y NO por SSM, al contrario que el bucket: esa
+    # API la crea el stack de SAM, no Terraform, asi que Terraform no puede
+    # publicar su URL sin invertir la dependencia entre repos. Se inyecta como
+    # `SPARK_BACKEND_API_URL` en la task definition, igual que
+    # `SPARK_CORS_ORIGINS`. Vacia, la herramienta de informes falla diciendolo;
+    # el resto del agente funciona igual.
+    backend_api_url: str | None = None
+    # Diez segundos para abrir o cerrar una fila. No cubre la generacion --
+    # eso pasa aqui dentro, no al otro lado -- asi que es una consulta a
+    # Postgres detras de una Lambda, y si tarda mas es que algo va mal.
+    backend_timeout_seconds: float = 10.0
+
     # --- Long-term memory (Sprint 6, tasks 6.D/6.E) ---
     # Delay before the background StudentProfile extraction (langmem
     # ReflectionExecutor) actually runs, debounced from the end of a turn.

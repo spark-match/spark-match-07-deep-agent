@@ -9,11 +9,17 @@ algo que se va a leer sin nadie delante para aclararlo.
 Solo dos herramientas, a proposito: ver el ranking y emitir el informe. Lo que
 no tiene es cualquier via para escribir cifras — ver
 ``src/tools/report/handler.py``.
+
+Emitir es **un** paso y no dos: `publish_orientation_report` arma, sube y
+registra en la misma llamada. Partirlo en "armar" y "publicar" obligaria al
+informe a atravesar el contexto del modelo entre las dos, con sus cifras
+dentro, que es justo lo que el diseno entero evita — ver
+``src/tools/report/publish.py``.
 """
 
 from src.prompts import REPORT_SYSTEM_PROMPT
 from src.tools.recommendation import recommend_programs
-from src.tools.report import build_orientation_report
+from src.tools.report import publish_orientation_report
 
 REPORT_SUBAGENT = {
     "name": "report",
@@ -26,8 +32,8 @@ REPORT_SUBAGENT = {
     ),
     "system_prompt": REPORT_SYSTEM_PROMPT,
     # `recommend_programs` para ver que carreras hay y con que cifras;
-    # `build_orientation_report` para emitir. Nada mas: `search_careers`
+    # `publish_orientation_report` para emitir. Nada mas: `search_careers`
     # tentaria a volcar la descripcion del catalogo dentro del `insight`, que
     # es justo lo que el prompt pide no hacer.
-    "tools": [recommend_programs, build_orientation_report],
+    "tools": [recommend_programs, publish_orientation_report],
 }

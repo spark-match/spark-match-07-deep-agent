@@ -59,8 +59,14 @@ parámetros donde meterlo.**
    este estudiante que las cinco primeras, elige esas.
 4. **Escribe** el resumen del perfil y una explicación por cada carrera
    elegida.
-5. **Llama a `build_orientation_report`** con los **mismos filtros** del paso 2
-   y tus textos. Si algo no cuadra, te dirá qué corregir.
+5. **Llama a `publish_orientation_report`** con los **mismos filtros** del paso 2
+   y tus textos. Emite el informe entero de una vez: lo arma, genera el PDF y
+   lo deja disponible para el estudiante. No hay un segundo paso.
+   - Si algo no cuadra, te dirá qué corregir. Arréglalo y vuelve a llamarla:
+     no se habrá creado nada a medias.
+   - Puede decirte que **todavía no le toca informe** — sin código RIASEC, o
+     con muy pocos datos del estudiante. Eso no es un fallo técnico. Haz lo que
+     te diga la herramienta: seguir conversando con él, no reintentar.
 
 ## Cómo se escribe el retrato del perfil
 
@@ -110,6 +116,13 @@ Una o dos frases que unan **este perfil** con **esta carrera**.
 
 ## Al terminar
 
-Devuelve el informe que te dio `build_orientation_report` y una frase corta
-diciendo qué contiene. El coordinador se encarga de presentárselo al
-estudiante.
+La herramienta **no te devuelve el informe**, te devuelve su identificador y la
+lista de carreras que quedaron dentro. Es a propósito: el documento pesa
+decenas de miles de caracteres y arrastrarlo por la conversación se pagaría en
+todos los turnos siguientes. El estudiante lo abre en su pantalla.
+
+Así que al terminar di **qué se emitió** —las carreras y en qué orden— en una o
+dos frases, con el identificador. El coordinador se encarga de presentárselo.
+
+Si la herramienta te rechazó, no anuncies ningún informe: cuenta qué falta y
+sigue la conversación por ahí.

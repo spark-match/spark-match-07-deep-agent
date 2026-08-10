@@ -14,13 +14,13 @@ from src.tools.catalog import search_careers
 from src.tools.matching import calculate_affinity
 from src.tools.programs import search_programs
 from src.tools.recommendation import recommend_programs
-from src.tools.report import build_orientation_report
+from src.tools.report import publish_orientation_report
 from src.tools.web_search import web_search
 
 __all__ = [
-    "build_orientation_report",
     "calculate_affinity",
     "evaluate_riasec_profile",
+    "publish_orientation_report",
     "recommend_programs",
     "search_careers",
     "search_programs",

@@ -2,6 +2,7 @@
 
 from src.auth.budget import BUDGET_NAMESPACE_SUFFIX, check_and_increment_daily_budget
 from src.auth.context import AgentContext, AuthContext
+from src.auth.current_token import get_request_token, reset_request_token, set_request_token
 from src.auth.dependencies import require_auth
 from src.auth.jwt_validator import JWT_ALGORITHM, JWT_AUDIENCE, JWT_ISSUER, AuthError, decode_token
 from src.auth.roles import CAPABILITIES, DEFAULT_ROLE, Role, has_capability, resolve_role
@@ -24,8 +25,11 @@ __all__ = [
     "check_and_increment_daily_budget",
     "decode_token",
     "derive_thread_id",
+    "get_request_token",
     "has_capability",
     "load_jwt_secret",
     "require_auth",
+    "reset_request_token",
     "resolve_role",
+    "set_request_token",
 ]

@@ -38,13 +38,20 @@ def _unauthorized(detail: str = _UNAUTHENTICATED) -> HTTPException:
     return HTTPException(status.HTTP_401_UNAUTHORIZED, detail)
 
 
-def _context_from_claims(claims: dict[str, Any], user_id: object) -> AuthContext:
+def _context_from_claims(
+    claims: dict[str, Any], user_id: object, raw_token: str = ""
+) -> AuthContext:
     """Build the ``AuthContext`` from a claims mapping, or raise ``401``.
 
     Los dos caminos admitidos -- contexto del authorizer y token Bearer --
     terminan aqui, asi que la forma del contexto se decide en un solo sitio.
     El ``user_id`` llega ya resuelto porque cada camino lo saca de una clave
     distinta.
+
+    ``raw_token`` solo lo trae el camino Bearer. Detras del authorizer de API
+    Gateway no existe: el token se quedo en el authorizer y aqui llegan los
+    claims que este reenvio. Que quede vacio es informacion correcta, no un
+    hueco que rellenar.
     """
     if not isinstance(user_id, str) or not user_id:
         raise _unauthorized()
@@ -54,6 +61,7 @@ def _context_from_claims(claims: dict[str, Any], user_id: object) -> AuthContext
         user_id=user_id,
         email=raw_email if isinstance(raw_email, str) else "",
         role=str(resolve_role(raw_role if isinstance(raw_role, str) else None)),
+        token=raw_token,
     )
 
 
@@ -88,7 +96,7 @@ async def require_auth(
     except AuthError as exc:
         raise _unauthorized(str(exc)) from exc
 
-    return _context_from_claims(claims, claims.get("sub"))
+    return _context_from_claims(claims, claims.get("sub"), creds.credentials)
 
 
 __all__ = ["require_auth"]

@@ -70,6 +70,25 @@ jobs:
       sbom: true
       deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
 
+  # `task-definition-family` no estaba puesto y por eso una variable de entorno
+  # anadida desde Terraform NUNCA llegaba al contenedor.
+  #
+  # El default del reusable ("") significa "la revision que el servicio corre
+  # ahora mismo", y esa nunca es la de Terraform: `aws_ecs_service` declara
+  # `ignore_changes = [task_definition]` -- tiene que hacerlo, o cada apply
+  # haria rollback a la imagen que el pipeline puso -- asi que Terraform
+  # registra una revision nueva y el servicio se queda apuntando a la del
+  # pipeline. Basar el rollout en la del servicio perpetua esa rama: los
+  # cambios de infraestructura se registran y nadie los ejecuta jamas.
+  #
+  # Con la familia puesta, AWS resuelve su ULTIMA revision activa. En un push
+  # normal esa es la del pipeline anterior y el comportamiento es identico;
+  # despues de un apply es la de Terraform, y entonces la imagen de este run se
+  # pinta encima. En los dos casos sale lo correcto.
+  #
+  # La familia coincide con el nombre del servicio porque `modules/agent-service`
+  # usa `local.name_prefix` para las dos cosas; no es casualidad, pero conviene
+  # saber que si eso cambiara habria que separar la variable.
   roll-dev:
     name: roll ecs (dev)
     needs: deploy-dev
@@ -79,6 +98,7 @@ jobs:
       aws-region: us-east-1
       cluster-name: ${{ vars.ECS_CLUSTER_DEV }}
       service-name: ${{ vars.ECS_SERVICE_DEV }}
+      task-definition-family: ${{ vars.ECS_SERVICE_DEV }}
       container-name: ${{ vars.ECS_CONTAINER_DEV }}
       image-uri: ${{ needs.deploy-dev.outputs.image-uri }}
       deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
@@ -107,6 +127,8 @@ jobs:
       aws-region: us-east-1
       cluster-name: ${{ vars.ECS_CLUSTER_PROD }}
       service-name: ${{ vars.ECS_SERVICE_PROD }}
+      # Ver el comentario largo de `roll-dev`.
+      task-definition-family: ${{ vars.ECS_SERVICE_PROD }}
       container-name: ${{ vars.ECS_CONTAINER_PROD }}
       image-uri: ${{ needs.deploy-production.outputs.image-uri }}
       deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD }}
