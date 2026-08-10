@@ -1,0 +1,166 @@
+/* Hoja de estilos del informe en PDF (ADR-019, D11).
+ *
+ * Hermana de `.prose` del frontend, no una invencion nueva: mismas jerarquias,
+ * misma paleta, misma tipografia. Un informe que no se parece al producto del
+ * que salio da mala espina justo cuando mas confianza hace falta.
+ *
+ * Tres cosas que se apartan de la web, y por que:
+ *
+ * 1. **El fondo es blanco, no crema.** La web usa `--cream` (#f9f5ec) en el
+ *    body. En pantalla no cuesta nada; impreso, un fondo de color se paga en
+ *    tinta en cada pagina, y este documento lo van a imprimir en cabinas donde
+ *    se cobra por hoja. El color de marca se queda en titulares y filetes.
+ *
+ * 2. **Todo en Inter, sin el serif de titulares.** La web usa Fraunces para
+ *    los encabezados, pero Fraunces no esta empaquetada en Debian y no se
+ *    puede instalar en la imagen sin vendorizar el binario. Poner OTRO serif
+ *    en su lugar se leeria como un error; un documento de una sola familia se
+ *    lee como una decision. Cuando se vendorice Fraunces, esto son un
+ *    @font-face y una linea.
+ *
+ * 3. **Los colores van en hex, no en oklch().** WeasyPrint no entiende
+ *    `oklch()`, y la paleta del frontend esta escrita entera en ese espacio.
+ *    Estan convertidos con el script del scratchpad; el valor original va
+ *    comentado al lado para poder rehacer la conversion.
+ *
+ *    Ojo: `--teal-deep` y `--teal-glow` CAEN FUERA de la gama sRGB y estan
+ *    recortados. No es un fallo de conversion ni algo que arreglar -- un PDF
+ *    es sRGB y un monitor de gama amplia no lo es. Si alguien compara la web
+ *    con el PDF en una pantalla buena y ve el verde ligeramente distinto, es
+ *    esto y es correcto.
+ */
+
+:root {
+  --teal-deep: #005b5c;      /* oklch(0.42 0.09 195), recortado a gama sRGB */
+  --teal-glow: #009f82;      /* oklch(0.62 0.13 175), recortado a gama sRGB */
+  --ink: #061d2b;            /* oklch(0.22 0.04 240) */
+  --muted: #829298;          /* oklch(0.65 0.02 220) */
+  --border: #dcd7cd;         /* oklch(0.88 0.015 85) */
+  --surface: #f9f5ec;        /* oklch(0.97 0.012 85) -- solo en las fichas */
+}
+
+@page {
+  size: A4;
+  margin: 20mm 18mm 18mm;
+
+  @bottom-left {
+    content: "Spark Match — informe de orientación vocacional";
+    font-family: Inter, sans-serif;
+    font-size: 8pt;
+    color: var(--muted);
+  }
+
+  /* Con el total delante se sabe si falta una hoja. Un informe que se imprime
+   * y se lleva a casa se desordena; "2 de 5" lo dice, "2" no. */
+  @bottom-right {
+    content: counter(page) " de " counter(pages);
+    font-family: Inter, sans-serif;
+    font-size: 8pt;
+    color: var(--muted);
+  }
+}
+
+body {
+  font-family: Inter, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0;
+}
+
+h1 {
+  font-size: 21pt;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--teal-deep);
+  margin: 0 0 0.2em;
+}
+
+h2 {
+  font-size: 14pt;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--teal-deep);
+  margin: 1.6em 0 0.6em;
+  padding-bottom: 0.25em;
+  border-bottom: 1.5px solid var(--border);
+  /* Un encabezado solo al pie de una pagina es la unica rotura de maquetacion
+   * que un lector nota sin buscarla. */
+  break-after: avoid;
+}
+
+h3 {
+  font-size: 11.5pt;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 1.4em 0 0.15em;
+  break-after: avoid;
+}
+
+/* La linea de institucion, que va justo debajo de cada h3. */
+h3 + p {
+  color: var(--muted);
+  font-size: 9.5pt;
+  margin: 0 0 0.7em;
+  break-after: avoid;
+}
+
+p {
+  margin: 0 0 0.8em;
+  /* Sin esto, una linea suelta al principio o al final de la pagina; con dos,
+   * el parrafo se parte por donde se lee bien. */
+  orphans: 2;
+  widows: 2;
+}
+
+strong {
+  font-weight: 600;
+}
+
+/* --- La ficha de cifras de cada carrera --- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 0.9em;
+  font-size: 9.5pt;
+  /* Cuatro filas caben siempre en una pagina: partirlas no ahorra espacio y
+   * deja la mitad de las cifras huerfanas de su carrera. */
+  break-inside: avoid;
+}
+
+th {
+  display: none;  /* Los encabezados "Dato | Valor" son andamiaje del Markdown. */
+}
+
+td {
+  padding: 0.3em 0.6em;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+td:first-child {
+  color: var(--muted);
+  width: 42%;
+}
+
+td:last-child {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* --- Las notas de procedencia --- */
+
+/* La ultima seccion explica de donde salen las cifras y que significa
+ * "estimado". Va mas pequena porque es referencia, no lectura -- pero no gris
+ * claro: es justo lo que hay que poder leer cuando alguien discute un numero. */
+h2 + ul,
+ul {
+  font-size: 9.5pt;
+  padding-left: 1.1em;
+  margin: 0 0 0.8em;
+}
+
+li {
+  margin-bottom: 0.35em;
+}
