@@ -69,6 +69,35 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---- Stage 2: runtime -----------------------------------------------------
 FROM --platform=linux/arm64 python:3.14-slim-bookworm AS runtime
 
+# Bibliotecas del sistema para WeasyPrint (ADR-019, D11) y la tipografia del
+# producto.
+#
+# NO SON OPCIONALES Y NO SON ADORNO. WeasyPrint las carga por FFI al
+# importarse; sin ellas, generar el informe en PDF falla. `src/reports/pdf.py`
+# importa WeasyPrint dentro de la funcion justo para que ese fallo se quede en
+# "no hay PDF" en vez de tumbar el contenedor entero, asi que si alguien borra
+# esta capa para adelgazar la imagen, el agente seguira arrancando y
+# conversando y **el fallo no aparecera hasta que un estudiante pida su
+# informe**. Leer ese fichero antes de tocar esta linea.
+#
+# `fonts-inter` es la misma tipografia que usa la web. El frontend la trae de
+# Google Fonts por `@import`, cosa que aqui no sirve: el contenedor no sale a
+# internet y no debe hacerlo en mitad de un render. Fraunces (los titulares de
+# la web) no esta empaquetada en Debian, asi que el PDF va todo en Inter --
+# ver la cabecera de `src/reports/report.css`.
+#
+# --no-install-recommends: sin el, `fonts-inter` arrastra media coleccion de
+# fuentes del sistema.
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libharfbuzz0b \
+        libcairo2 \
+        libgdk-pixbuf-2.0-0 \
+        fonts-inter \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user. 1001 is a fixed UID/GID so volume permissions
 # are reproducible across rebuilds (important for AgentCore / ECR
 # layered volumes).
