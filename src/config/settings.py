@@ -198,6 +198,15 @@ class Settings(BaseSettings):
     # to disable the keep-alive entirely.
     sse_heartbeat_seconds: float = 15.0
 
+    # How long a turn holds its conversation before the lease expires on
+    # its own (see src/threads/lease.py). Only comes into play after a
+    # crash: a turn that finishes -- or fails -- releases in a `finally`.
+    # Sized to outlast a real turn, which with a subagent and a web search
+    # can run for minutes; too short and a slow turn would let a second one
+    # in, which is the whole thing this prevents. Set to 0 to disable
+    # serialization entirely (a local run without a store already skips it).
+    run_lease_ttl_seconds: float = 300.0
+
     # Whether the AG-UI stream forwards ag_ui_langgraph's RAW passthrough
     # events. Off by default: they carry the verbatim LangGraph internals,
     # system prompts included, to anyone holding a valid JWT. Turn on

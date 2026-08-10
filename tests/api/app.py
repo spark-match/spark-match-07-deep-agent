@@ -414,6 +414,80 @@ class TestThreadsApi:
         assert client.get("/threads", headers=headers).json()["threads"] == []
         assert client.get("/threads/chat-1/messages", headers=headers).json()["messages"] == []
 
+    def _ocupa(self, client, user_id, client_thread_id, run_id="run-de-la-otra-pestaña"):
+        """Deja un turno «en curso» sobre esa conversacion.
+
+        Se planta el arrendamiento en el store en vez de lanzar un turno de
+        verdad en paralelo: TestClient es sincrono y consume el stream
+        entero, asi que un turno real siempre habria soltado antes de que
+        empezara el segundo -- que es justo lo que no se quiere probar.
+        """
+        from src.auth import derive_thread_id
+        from src.threads.lease import RUN_LEASE_NAMESPACE
+
+        now = datetime.now(UTC)
+        client.app.state.store.put(
+            RUN_LEASE_NAMESPACE,
+            derive_thread_id(user_id, client_thread_id),
+            {
+                "run_id": run_id,
+                "started_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            },
+        )
+
+    def test_a_second_turn_on_a_busy_conversation_is_refused(self, client):
+        """Dos pestañas sobre el mismo hilo se pisaban EN SILENCIO.
+
+        El checkpointer no tiene control de concurrencia: las dos leen el
+        mismo estado, las dos escriben, y los mensajes de la que termina
+        antes dejan de estar en el camino desde la cabeza.
+        """
+        token = _make_token(user_id="u-busy")
+        self._post_turn(client, "chat-1", token, "primera pregunta")
+        self._ocupa(client, "u-busy", "chat-1")
+
+        response = self._post_turn(client, "chat-1", token, "segunda pregunta")
+
+        assert response.status_code == 409
+
+    def test_another_conversation_is_not_blocked_by_it(self, client):
+        token = _make_token(user_id="u-busy2")
+        self._post_turn(client, "chat-1", token)
+        self._ocupa(client, "u-busy2", "chat-1")
+
+        assert self._post_turn(client, "chat-2", token).status_code == 200
+
+    def test_a_finished_turn_leaves_the_conversation_free(self, client):
+        """El arrendamiento se suelta en el `finally` del stream."""
+        token = _make_token(user_id="u-serial")
+        assert self._post_turn(client, "chat-1", token, "una").status_code == 200
+
+        assert self._post_turn(client, "chat-1", token, "y otra").status_code == 200
+
+    def test_the_history_reports_a_turn_in_flight(self, client):
+        """Es lo que deja al frontend decir «estoy respondiendo» en vez de
+        enseñar la pregunta sin respuesta y provocar que se repita."""
+        token = _make_token(user_id="u-running")
+        self._post_turn(client, "chat-1", token)
+        self._ocupa(client, "u-running", "chat-1")
+
+        body = client.get(
+            "/threads/chat-1/messages", headers={"Authorization": f"Bearer {token}"}
+        ).json()
+
+        assert body["running"] is True
+
+    def test_a_quiet_conversation_is_not_running(self, client):
+        token = _make_token(user_id="u-quiet")
+        self._post_turn(client, "chat-1", token)
+
+        body = client.get(
+            "/threads/chat-1/messages", headers={"Authorization": f"Bearer {token}"}
+        ).json()
+
+        assert body["running"] is False
+
     def test_the_same_client_id_is_reusable_after_a_delete(self, client):
         """El borrado libera tambien el registro de ownership: si no, el id
         derivado quedaria reclamado para siempre y el estudiante recibiria
