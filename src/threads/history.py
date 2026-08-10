@@ -76,8 +76,62 @@ class SupportsGetState(Protocol):
     async def aget_state(self, config: dict[str, Any]) -> Any: ...
 
 
-# Solo estos llegan al cliente como mensajes.
-_CLIENT_VISIBLE_ROLES = {"human": "user", "ai": "assistant"}
+def _anotar_resultado(pendientes: dict[str, dict[str, Any]], message: Any) -> None:
+    """Cierra el estado de la llamada a la que responde este ToolMessage.
+
+    ``status`` es "error" cuando la herramienta reviento; cualquier otra
+    cosa cuenta como exito.
+    """
+    actividad = pendientes.get(str(getattr(message, "tool_call_id", "")))
+    if actividad is not None:
+        actividad["ok"] = getattr(message, "status", None) != "error"
+
+
+def _entrada_de_usuario(message: Any) -> dict[str, Any]:
+    return {
+        "id": getattr(message, "id", None),
+        "role": "user",
+        "content": _text_of(getattr(message, "content", "")),
+    }
+
+
+def _entrada_del_asistente(
+    message: Any,
+    pendientes: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Entrada del historial para un mensaje del asistente, o ``None``.
+
+    Registra en ``pendientes`` las llamadas que abre este mensaje y, si
+    ademas CIERRA el turno, se las lleva consigo.
+    """
+    llamadas = getattr(message, "tool_calls", None) or []
+    for tool_call in llamadas:
+        actividad = _actividad_de(tool_call)
+        if actividad is not None:
+            pendientes[actividad["id"]] = actividad
+
+    text = _text_of(getattr(message, "content", ""))
+    if not text.strip():
+        # Un turno del asistente que solo traia llamadas. Real para el
+        # grafo, invisible en la conversacion.
+        return None
+
+    entrada: dict[str, Any] = {
+        "id": getattr(message, "id", None),
+        "role": "assistant",
+        "content": text,
+    }
+
+    # La actividad se cuelga del mensaje que CIERRA el turno, o sea uno con
+    # texto y sin llamadas propias. Anthropic emite a veces texto y llamadas
+    # en el mismo mensaje ("dejame revisar el catalogo" + `search_careers`):
+    # ese texto es preambulo y el turno sigue, asi que colgarle ahi los
+    # chips los pondria sobre la frase equivocada.
+    if pendientes and not llamadas:
+        entrada["activity"] = list(pendientes.values())
+        pendientes.clear()
+
+    return entrada
 
 
 def _text_of(content: Any) -> str:
@@ -168,65 +222,31 @@ async def load_thread_messages(
     # Actividad acumulada del turno en curso, en orden de llamada.
     pendientes: dict[str, dict[str, Any]] = {}
 
+    # Un `match` sobre el tipo, y cada rama en su funcion: la version que
+    # hacia todo esto aqui dentro llegaba a complejidad cognitiva 24 sobre
+    # las 15 que permite el analizador, y con razon -- eran tres formas de
+    # mensaje con reglas distintas metidas en un solo bucle.
     for message in messages:
-        tipo = getattr(message, "type", "")
-
-        if tipo == "tool":
-            # Cierra el estado de su llamada. `status` es "error" cuando la
-            # herramienta reviento; cualquier otra cosa cuenta como exito.
-            actividad = pendientes.get(str(getattr(message, "tool_call_id", "")))
-            if actividad is not None:
-                actividad["ok"] = getattr(message, "status", None) != "error"
-            continue
-
-        role = _CLIENT_VISIBLE_ROLES.get(tipo)
-        if role is None:
-            continue
-
-        if role == "user":
-            # Empieza un turno nuevo. Lo que quede pendiente es de un turno
-            # que se corto a medias -- cerrar la pestaña durante la
-            # generacion, por ejemplo -- y un chip suelto sin respuesta
-            # debajo parece un fallo de la aplicacion, no un turno
-            # interrumpido.
-            pendientes = {}
-            history.append(
-                {
-                    "id": getattr(message, "id", None),
-                    "role": role,
-                    "content": _text_of(message.content),
-                }
-            )
-            continue
-
-        llamadas = getattr(message, "tool_calls", None) or []
-        for tool_call in llamadas:
-            actividad = _actividad_de(tool_call)
-            if actividad is not None:
-                pendientes[actividad["id"]] = actividad
-
-        text = _text_of(getattr(message, "content", ""))
-        if not text.strip():
-            # Un turno del asistente que solo traia llamadas. Real para el
-            # grafo, invisible en la conversacion.
-            continue
-
-        entrada: dict[str, Any] = {
-            "id": getattr(message, "id", None),
-            "role": role,
-            "content": text,
-        }
-
-        # La actividad se cuelga del mensaje que CIERRA el turno, o sea uno
-        # con texto y sin llamadas propias. Anthropic emite a veces texto y
-        # llamadas en el mismo mensaje ("dejame revisar el catalogo" +
-        # `search_careers`): ese texto es preambulo y el turno sigue, asi
-        # que colgarle ahi los chips los pondria sobre la frase equivocada.
-        if pendientes and not llamadas:
-            entrada["activity"] = list(pendientes.values())
-            pendientes = {}
-
-        history.append(entrada)
+        match getattr(message, "type", ""):
+            case "tool":
+                _anotar_resultado(pendientes, message)
+            case "human":
+                # Empieza un turno nuevo. Lo que quede pendiente es de un
+                # turno cortado a medias -- cerrar la pestaña durante la
+                # generacion, por ejemplo -- y un chip suelto sin respuesta
+                # debajo parece un fallo de la aplicacion, no un turno
+                # interrumpido.
+                pendientes.clear()
+                history.append(_entrada_de_usuario(message))
+            case "ai":
+                entrada = _entrada_del_asistente(message, pendientes)
+                if entrada is not None:
+                    history.append(entrada)
+            case _:
+                # Cualquier otra cosa -- sobre todo el `SystemMessage` con el
+                # perfil que inyecta ProfileHydrationMiddleware -- no es
+                # conversacion y no sale.
+                continue
 
     return history
 
