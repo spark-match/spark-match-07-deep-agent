@@ -151,6 +151,50 @@ class TestParsePromptFile:
         assert meta["audience"] == ""
         assert body == "Just body, no frontmatter."
 
+    def test_unclosed_frontmatter_is_all_body(self, tmp_path):
+        """Abrir sin cerrar no es frontmatter a medias: es un fichero sin el.
+
+        Es ademas el caso que hacia cuadratico al patron anterior — el
+        perezoso recorria el fichero entero buscando un cierre inexistente.
+        """
+        path = tmp_path / "unclosed.md"
+        path.write_text("---\naudience: test\nse quedo abierto\n", encoding="utf-8")
+
+        meta, body = _parse_prompt_file(path)
+
+        assert meta["audience"] == ""
+        assert body.startswith("---")
+
+    def test_empty_frontmatter_is_still_frontmatter(self, tmp_path):
+        """Dos delimitadores seguidos: metadatos vacios y el cuerpo limpio.
+
+        El patron anterior no reconocia este caso y devolvia el fichero
+        entero como cuerpo, delimitadores incluidos. Ninguno de los cinco
+        prompts del paquete lo usa, pero un `---` seguido de otro `---` es un
+        bloque vacio en cualquier lector de frontmatter, no texto.
+        """
+        path = tmp_path / "empty_fm.md"
+        path.write_text("---\n---\nSolo cuerpo.", encoding="utf-8")
+
+        meta, body = _parse_prompt_file(path)
+
+        assert meta == {}
+        assert body == "Solo cuerpo."
+
+    def test_horizontal_rule_in_body_is_not_a_delimiter(self, tmp_path):
+        """Un `---` mas abajo separa secciones del prompt, no cierra nada."""
+        path = tmp_path / "with_rule.md"
+        path.write_text(
+            "---\naudience: test\n---\nIntro.\n\n---\n\nSegunda parte.",
+            encoding="utf-8",
+        )
+
+        meta, body = _parse_prompt_file(path)
+
+        assert meta["audience"] == "test"
+        assert "---" in body
+        assert body.endswith("Segunda parte.")
+
     def test_raises_on_malformed_yaml(self, tmp_path):
         path = tmp_path / "bad_yaml.md"
         path.write_text(
