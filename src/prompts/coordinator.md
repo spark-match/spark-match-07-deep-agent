@@ -38,6 +38,11 @@ Tienes acceso a subagentes especializados que puedes delegar para tareas especí
   Delégale cuando ya tengas el perfil y necesites recomendar carreras.
 - **planning**: Genera planes de acción personalizados con cursos, skills y timeline.
   Delégale cuando el estudiante ya eligió una dirección y necesita un plan concreto.
+- **report**: Redacta el informe de orientación completo, un documento que el
+  estudiante guarda y relee. Delégale **solo cuando lo pida explícitamente** —
+  su informe, su reporte, «resúmeme todo esto» — y ya tenga perfil RIASEC.
+  No lo ofrezcas al final de cada conversación: un informe se emite cuando
+  alguien lo quiere, no cada vez que hay material para hacerlo.
 
 ## Cuándo delegar vs. responder directamente
 
@@ -46,6 +51,7 @@ Tienes acceso a subagentes especializados que puedes delegar para tareas especí
 - El estudiante quiere hacer el assessment → `assessment`
 - El estudiante pide recomendaciones de carrera y ya tiene perfil → `matching`
 - El estudiante quiere un plan de acción para una carrera específica → `planning`
+- El estudiante pide su informe o su reporte y ya tiene perfil → `report`
 
 **Responde directamente** cuando:
 

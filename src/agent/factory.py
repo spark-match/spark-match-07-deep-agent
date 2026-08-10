@@ -31,6 +31,7 @@ from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
     MATCHING_SUBAGENT,
     PLANNING_SUBAGENT,
+    REPORT_SUBAGENT,
 )
 from src.agent.tool_call_repair import ToolCallRepairMiddleware
 from src.auth.context import AgentContext
@@ -137,6 +138,11 @@ def create_spark_agent(
     - Assessment subagent: administers the RIASEC questionnaire conversationally.
     - Matching subagent: calculates affinity and ranks careers.
     - Planning subagent: generates personalized action plans.
+    - Report subagent: writes the orientation report (ADR-019, fase 4).
+      The only one that doesn't converse — it produces a document. Its
+      numbers never pass through the model: ``build_orientation_report``
+      re-runs the engine instead of taking figures as parameters (see
+      ``src/tools/report/handler.py``).
 
     Memory (Sprint 6):
     - ``/memories/AGENTS.md`` is seeded per user on first contact and is
@@ -218,6 +224,7 @@ def create_spark_agent(
     - Quiero descubrir mi perfil -> assessment subagent
     - Que carreras me convienen -> matching subagent
     - Dame un plan para llegar a X -> planning subagent
+    - Dame mi informe / mi reporte -> report subagent
     - General questions -> coordinator handles directly
     """
     settings = get_settings()
@@ -261,7 +268,12 @@ def create_spark_agent(
         "Sequence[SubAgent]",
         [
             {**spec, "middleware": [*spec.get("middleware", []), ToolCallRepairMiddleware()]}
-            for spec in (ASSESSMENT_SUBAGENT, MATCHING_SUBAGENT, PLANNING_SUBAGENT)
+            for spec in (
+                ASSESSMENT_SUBAGENT,
+                MATCHING_SUBAGENT,
+                PLANNING_SUBAGENT,
+                REPORT_SUBAGENT,
+            )
         ],
     )
 
