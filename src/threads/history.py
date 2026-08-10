@@ -1,51 +1,91 @@
-"""Rehydrating a conversation from the checkpointer.
+"""Rehidratando una conversacion desde el checkpointer.
 
-The checkpointer already holds every turn — that is what makes the agent
-remember within a session. What was missing is a way for the frontend to
-*read* it: on a page reload the browser has no record of the conversation
-it was in the middle of, and the AG-UI endpoint only streams new turns.
+El checkpointer ya guarda cada turno — es lo que hace que el agente
+recuerde. Lo que faltaba era que el frontend pudiera *leerlo*: al recargar
+la pagina el navegador no tiene registro de la conversacion en la que
+estaba, y el endpoint AG-UI solo emite turnos nuevos.
 
-Not everything in the checkpoint is conversation. ``ProfileHydrationMiddleware``
-injects a ``SystemMessage`` containing the student's extracted vocational
-profile on every turn, and those land in the same ``messages`` channel.
-Returning the checkpoint verbatim would ship that block — the profile plus
-the "no vuelvas a preguntar lo que ya está aquí" instruction — to the
-browser as part of the chat history. So this filters down to what the
-student actually said and what the advisor actually answered.
+No todo lo que hay en el checkpoint es conversacion.
+``ProfileHydrationMiddleware`` inyecta un ``SystemMessage`` con el perfil
+vocacional extraido en cada turno, y aterriza en el mismo canal
+``messages``. Devolver el checkpoint tal cual mandaria ese bloque al
+navegador como parte del historial.
+
+## La actividad tambien se rehidrata, y por que no basta con dejar de filtrar
+
+La primera version de este modulo tiraba las llamadas a herramienta
+enteras. El resultado: al recargar, los chips de actividad desaparecian y
+la respuesta quedaba sin procedencia. El estudiante veia unas cifras y
+ninguna pista de si salieron del catalogo del MINEDU, de una busqueda en
+internet o de un especialista — que es justo lo que decide cuanto fiarse.
+
+Pero devolver los mensajes de herramienta en crudo tampoco vale, y por el
+motivo original: los ``ToolMessage`` llevan resultados de busqueda enteros.
+Asi que lo que sale de aqui es un **resumen por llamada**, nunca el
+payload:
+
+- El nombre de la herramienta, para que el frontend le ponga su etiqueta.
+  La copia en castellano vive en la UI (``tool-labels.ts``) y tenerla
+  tambien aqui serian dos sitios donde cambiar el mismo texto.
+- Un **asunto**, y solo el que autoriza una lista blanca por herramienta
+  (``_ASUNTO_POR_HERRAMIENTA``). Es lo que permite desplegar «6 consultas
+  al catalogo» y ver que se busco «ingenieria» y tambien «gestion». Los
+  argumentos los escribe el modelo, asi que se eligen uno a uno en vez de
+  dejarlos pasar: el ``description`` de ``task``, por ejemplo, es el
+  prompt interno del coordinador y no sale nunca — mismo criterio que
+  ``src/agent/subagent_events.py``.
+- Si fue bien o mal.
+
+La forma es la misma que emite el stream en vivo (``subagent`` con la
+clave del especialista, ``toolCallId``), para que el frontend tenga un
+solo modelo y no dos caminos que se separen con el tiempo.
 """
 
 from __future__ import annotations
 
 from typing import Any, Protocol
 
+# Nombre con el que deepagents registra la herramienta de delegacion.
+_HERRAMIENTA_DE_DELEGACION = "task"
+
+# Que argumento de cada herramienta se puede enseñar. Lista BLANCA: lo que
+# no este aqui no sale, aunque la herramienta sea nueva. Un `dict` abierto
+# acabaria filtrando el primer argumento sensible que alguien añada.
+_ASUNTO_POR_HERRAMIENTA: dict[str, str] = {
+    "search_careers": "query",
+    "search_programs": "query",
+    "web_search": "query",
+    "recommend_programs": "riasec_code",
+}
+
+# Un asunto es una etiqueta, no un texto. El modelo puede emitir una
+# consulta larguisima y esto va dentro de un chip.
+_MAX_ASUNTO = 80
+
 
 class SupportsGetState(Protocol):
-    """The slice of a compiled LangGraph this module needs.
+    """El trozo de LangGraph compilado que necesita este modulo.
 
-    Reading the checkpointer directly does not work: ``aget_tuple`` returns
-    the *latest* checkpoint, whose ``channel_values`` holds only the
-    channels that step touched — on a finished turn that is
-    ``skills_metadata`` and ``memory_contents``, with no ``messages`` in
-    sight. Reconstructing the full state from checkpoint blobs and channel
-    versions is exactly the job ``aget_state`` already does, so this goes
-    through the graph instead.
+    Leer el checkpointer directamente no funciona: ``aget_tuple`` devuelve
+    el ultimo checkpoint, cuyos ``channel_values`` traen solo los canales
+    que toco ese paso — en un turno terminado son ``skills_metadata`` y
+    ``memory_contents``, sin rastro de ``messages``. Reconstruir el estado
+    completo desde los blobs es exactamente lo que ya hace ``aget_state``.
     """
 
     async def aget_state(self, config: dict[str, Any]) -> Any: ...
 
 
-# Only these reach the client. Tool messages and tool-call-only assistant
-# turns are machinery: they carry no text a student would recognize as
-# part of their conversation, and some carry raw search results.
+# Solo estos llegan al cliente como mensajes.
 _CLIENT_VISIBLE_ROLES = {"human": "user", "ai": "assistant"}
 
 
 def _text_of(content: Any) -> str:
-    """Flatten LangChain message content into plain text.
+    """Aplana el contenido de un mensaje de LangChain a texto plano.
 
-    Content is a string for most providers but a list of typed blocks for
-    others (and always, once a turn includes reasoning or images). Only
-    text blocks survive.
+    Es una cadena en la mayoria de proveedores y una lista de bloques
+    tipados en otros (y siempre, en cuanto un turno lleva razonamiento o
+    imagenes). Solo sobreviven los bloques de texto.
     """
     if isinstance(content, str):
         return content
@@ -62,16 +102,61 @@ def _text_of(content: Any) -> str:
     return ""
 
 
+def _recorta(valor: Any) -> str | None:
+    if not isinstance(valor, str):
+        valor = str(valor) if valor is not None else ""
+    limpio = " ".join(valor.split())
+    if not limpio:
+        return None
+    if len(limpio) <= _MAX_ASUNTO:
+        return limpio
+    return limpio[: _MAX_ASUNTO - 1].rstrip() + "…"
+
+
+def _actividad_de(tool_call: Any) -> dict[str, Any] | None:
+    """Resumen publicable de una llamada a herramienta."""
+    if not isinstance(tool_call, dict):
+        return None
+
+    nombre = tool_call.get("name")
+    if not isinstance(nombre, str) or not nombre:
+        return None
+
+    args = tool_call.get("args")
+    args = args if isinstance(args, dict) else {}
+
+    resumen: dict[str, Any] = {
+        "id": str(tool_call.get("id") or ""),
+        "tool": nombre,
+        "ok": None,
+    }
+
+    if nombre == _HERRAMIENTA_DE_DELEGACION:
+        # Solo la clave del especialista. `description`, el otro argumento,
+        # es el prompt que el coordinador le redacta y no es para leer.
+        subagente = args.get("subagent_type")
+        resumen["subagent"] = str(subagente) if subagente else "desconocido"
+        return resumen
+
+    campo = _ASUNTO_POR_HERRAMIENTA.get(nombre)
+    if campo is not None:
+        asunto = _recorta(args.get(campo))
+        if asunto is not None:
+            resumen["subject"] = asunto
+
+    return resumen
+
+
 async def load_thread_messages(
     graph: SupportsGetState | None,
     thread_id: str,
 ) -> list[dict[str, Any]]:
-    """Return the client-visible message history of ``thread_id``.
+    """Devuelve el historial visible de ``thread_id``, con su actividad.
 
-    An unknown or never-used thread yields an empty list rather than an
-    error: to a caller reopening a conversation, "no messages yet" and
-    "this conversation was never started" are the same thing, and
-    distinguishing them would leak whether a derived id exists.
+    Un hilo desconocido o sin usar da una lista vacia en vez de un error:
+    para quien reabre una conversacion, «aun no hay mensajes» y «esta
+    conversacion nunca existio» son lo mismo, y distinguirlos filtraria si
+    un id derivado existe.
     """
     if graph is None:
         return []
@@ -80,16 +165,68 @@ async def load_thread_messages(
     messages = (getattr(snapshot, "values", None) or {}).get("messages") or []
 
     history: list[dict[str, Any]] = []
+    # Actividad acumulada del turno en curso, en orden de llamada.
+    pendientes: dict[str, dict[str, Any]] = {}
+
     for message in messages:
-        role = _CLIENT_VISIBLE_ROLES.get(getattr(message, "type", ""))
+        tipo = getattr(message, "type", "")
+
+        if tipo == "tool":
+            # Cierra el estado de su llamada. `status` es "error" cuando la
+            # herramienta reviento; cualquier otra cosa cuenta como exito.
+            actividad = pendientes.get(str(getattr(message, "tool_call_id", "")))
+            if actividad is not None:
+                actividad["ok"] = getattr(message, "status", None) != "error"
+            continue
+
+        role = _CLIENT_VISIBLE_ROLES.get(tipo)
         if role is None:
             continue
+
+        if role == "user":
+            # Empieza un turno nuevo. Lo que quede pendiente es de un turno
+            # que se corto a medias -- cerrar la pestaña durante la
+            # generacion, por ejemplo -- y un chip suelto sin respuesta
+            # debajo parece un fallo de la aplicacion, no un turno
+            # interrumpido.
+            pendientes = {}
+            history.append(
+                {
+                    "id": getattr(message, "id", None),
+                    "role": role,
+                    "content": _text_of(message.content),
+                }
+            )
+            continue
+
+        llamadas = getattr(message, "tool_calls", None) or []
+        for tool_call in llamadas:
+            actividad = _actividad_de(tool_call)
+            if actividad is not None:
+                pendientes[actividad["id"]] = actividad
+
         text = _text_of(getattr(message, "content", ""))
         if not text.strip():
-            # An assistant turn that only carried tool calls. Real to the
-            # graph, invisible to the conversation.
+            # Un turno del asistente que solo traia llamadas. Real para el
+            # grafo, invisible en la conversacion.
             continue
-        history.append({"id": getattr(message, "id", None), "role": role, "content": text})
+
+        entrada: dict[str, Any] = {
+            "id": getattr(message, "id", None),
+            "role": role,
+            "content": text,
+        }
+
+        # La actividad se cuelga del mensaje que CIERRA el turno, o sea uno
+        # con texto y sin llamadas propias. Anthropic emite a veces texto y
+        # llamadas en el mismo mensaje ("dejame revisar el catalogo" +
+        # `search_careers`): ese texto es preambulo y el turno sigue, asi
+        # que colgarle ahi los chips los pondria sobre la frase equivocada.
+        if pendientes and not llamadas:
+            entrada["activity"] = list(pendientes.values())
+            pendientes = {}
+
+        history.append(entrada)
 
     return history
 
