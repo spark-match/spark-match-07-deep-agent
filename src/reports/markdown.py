@@ -34,6 +34,33 @@ _FILAS: tuple[tuple[str, str], ...] = (
 
 _MARCA_ESTIMADO = "estimado"
 
+# El CSV guarda la gestion en femenino ("Publica", "Privada"), que concuerda
+# con "universidad" y chirria con "instituto": "Instituto publica". Como el
+# informe se imprime y se ensena, la concordancia no es un detalle.
+_EN_MASCULINO = {"pública": "público", "privada": "privado"}
+
+# Los filtros viajan con su nombre de codigo. Imprimirlos tal cual pondria
+# "Se filtro por management_type" en un documento que lee un chico de
+# dieciseis anos.
+_NOMBRE_DEL_FILTRO = {
+    "region": "la región",
+    "management_type": "si es pública o privada",
+    "institution_type": "si es universidad o instituto",
+    "max_annual_cost": "el presupuesto",
+}
+
+
+def _gestion(carrera: ReportCareer) -> str:
+    """La gestion concordando con el tipo de institucion."""
+    valor = carrera.management_type.lower()
+    if carrera.institution_type.lower().startswith("instituto"):
+        return _EN_MASCULINO.get(valor, valor)
+    return valor
+
+
+def _nombre_legible(filtro: str) -> str:
+    return _NOMBRE_DEL_FILTRO.get(filtro, filtro)
+
 
 def _soles(cantidad: float) -> str:
     """S/ 4,261 — sin decimales, que en estas magnitudes son ruido."""
@@ -75,7 +102,7 @@ def _ficha(indice: int, carrera: ReportCareer) -> list[str]:
         f"### {indice}. {carrera.career} — {afinidad} de afinidad",
         "",
         f"{carrera.institution} · {carrera.location} · "
-        f"{carrera.institution_type} {carrera.management_type.lower()}",
+        f"{carrera.institution_type} {_gestion(carrera)}",
         "",
         "| Dato | Valor |",
         "| --- | --- |",
@@ -108,13 +135,14 @@ def _procedencia(informe: OrientationReport) -> list[str]:
 
     if informe.filters_applied:
         recortes = ", ".join(
-            f"sin «{nombre}» habría {cuantos:,}"
+            f"sin {_nombre_legible(nombre)} habría {cuantos:,}"
             for nombre, cuantos in sorted(informe.candidates_without_each_filter.items())
         )
+        aplicados = ", ".join(_nombre_legible(f) for f in informe.filters_applied)
         notas += [
-            f"- Se filtró por {', '.join(informe.filters_applied)}, y eso dejó "
-            f"{informe.total_candidates:,} programas de todo el catálogo ({recortes}). "
-            "Cambiar un filtro cambia esta lista.",
+            f"- Se filtró por {aplicados}, y eso dejó {informe.total_candidates:,} "
+            f"programas de todo el catálogo ({recortes}). Cambiar un filtro cambia "
+            "esta lista.",
         ]
     else:
         notas += [
