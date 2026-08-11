@@ -35,6 +35,7 @@ from langchain_core.messages import SystemMessage
 from src.agent.pii import redact_messages
 from src.agent.user_context import get_user_id
 from src.config import get_settings
+from src.memory.profile_envelope import perfil_de
 from src.prompts import USER_MEMORY_SEED
 
 if TYPE_CHECKING:
@@ -68,11 +69,18 @@ def _render_profile_block(profile: dict[str, Any]) -> str:
 
 
 def _render_if_present(items: list[Any]) -> str | None:
-    """Render the first stored profile, or ``None`` when there is nothing yet."""
+    """Render the first stored profile, or ``None`` when there is nothing yet.
+
+    El perfil se saca del sobre de langmem antes de pintarlo. Pintar el sobre
+    entero funcionaba -- el modelo lee bien un diccionario anidado -- pero le
+    ponia delante dos lineas de fontaneria (``kind``, ``content``) y, en
+    cuanto el assessment escribia sus puntuaciones, se las habria enseñado
+    dos veces y en dos sitios distintos. Ver `src.memory.profile_envelope`.
+    """
     if not items:
         return None
-    profile = items[0].value
-    if not isinstance(profile, dict) or not profile:
+    profile = perfil_de(items[0].value)
+    if not profile:
         return None
     return _render_profile_block(profile)
 

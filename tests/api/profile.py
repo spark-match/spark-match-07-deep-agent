@@ -158,6 +158,54 @@ class TestEscrituraDePreferencias:
         assert cuerpo["persisted"] is False
 
 
+class TestElPerfilVieneEnUnSobre:
+    """La ruta sirve el perfil, no el sobre de langmem.
+
+    Lo que el extractor deja en el store es
+    `{"kind": "StudentProfile", "content": {...}}`. Devolverlo tal cual daba
+    una respuesta en la que la pantalla no encontraba ni un campo, y por eso
+    el «Perfil:» de la vista de informe salia en blanco.
+    """
+
+    SOBRE = {"kind": "StudentProfile", "content": {"riasec_code": "IRC", "name": "Ana"}}
+
+    def test_devuelve_lo_de_dentro_y_no_el_sobre(self, cliente, store):
+        store.put(NAMESPACE, "profile", dict(self.SOBRE))
+
+        perfil = cliente.get("/profile").json()["profile"]
+
+        assert perfil["riasec_code"] == "IRC"
+        assert "kind" not in perfil
+        assert "content" not in perfil
+
+    def test_las_preferencias_se_guardan_dentro_del_sobre(self, cliente, store):
+        store.put(NAMESPACE, "profile", dict(self.SOBRE))
+
+        cliente.put("/profile/preferences", json={"preferred_region": "Cusco"})
+
+        guardado = store.search(NAMESPACE, limit=1)[0].value
+        assert guardado["content"]["preferred_region"] == "Cusco"
+        assert "preferred_region" not in guardado
+
+    def test_el_sobre_sobrevive_a_la_escritura(self, cliente, store):
+        store.put(NAMESPACE, "profile", dict(self.SOBRE))
+
+        cliente.put("/profile/preferences", json={"preferred_region": "Cusco"})
+
+        guardado = store.search(NAMESPACE, limit=1)[0].value
+        assert guardado["kind"] == "StudentProfile"
+        assert guardado["content"]["riasec_code"] == "IRC"
+
+    def test_lo_que_se_escribe_se_vuelve_a_leer(self, cliente, store):
+        store.put(NAMESPACE, "profile", dict(self.SOBRE))
+
+        cliente.put("/profile/preferences", json={"preferred_region": "Cusco"})
+
+        perfil = cliente.get("/profile").json()["profile"]
+        assert perfil["preferred_region"] == "Cusco"
+        assert perfil["name"] == "Ana"
+
+
 class TestAislamientoEntreUsuarios:
     def test_cada_usuario_ve_solo_su_perfil(self, store):
         app = _app(store)

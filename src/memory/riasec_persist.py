@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.memory.profile_envelope import con_campos
 from src.memory.profile_manager import PROFILE_NAMESPACE
 
 logger = logging.getLogger(__name__)
@@ -97,9 +98,12 @@ async def guardar_riasec_medido(
         # puerta seguiria leyendo el viejo, sin nada que lo delate.
         clave = existente[0].key if existente else CLAVE_DEL_PERFIL
         anterior = existente[0].value if existente else {}
-        base = dict(anterior) if isinstance(anterior, dict) else {}
 
-        await store.aput(namespace, clave, {**base, **campos})
+        # `con_campos` y no `{**anterior, **campos}`: langmem guarda el perfil
+        # dentro de `content`, y fusionar en la raiz dejaba las seis
+        # puntuaciones fuera del perfil de verdad -- invisibles para la
+        # completitud de D8 y para el propio extractor.
+        await store.aput(namespace, clave, con_campos(anterior, campos))
     except Exception:
         logger.warning("No se pudo guardar el perfil RIASEC medido", exc_info=True)
         return False

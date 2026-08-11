@@ -119,6 +119,66 @@ async def test_un_valor_que_no_es_dict_es_perfil_vacio():
     assert await leer_perfil_para_la_puerta(store, USUARIO) == PERFIL_VACIO
 
 
+class TestElPerfilVieneEnUnSobre:
+    """El fallo que dejaba sin informe a quien si tenia perfil.
+
+    langmem no guarda el `StudentProfile` tal cual, lo envuelve en
+    `{"kind", "content"}`. Validar el sobre no lanza --en `StudentProfile` no
+    hay un solo campo obligatorio-- sino que devuelve un perfil entero a
+    `None`, asi que esta puerta contestaba `riasec_missing` y completitud 0.0
+    a un estudiante con las seis puntuaciones guardadas. Sin excepcion, sin
+    warning y sin traza: el unico sintoma era "no se pudo generar el reporte".
+
+    Medido en dev el 2026-08-11.
+    """
+
+    def _sobre(self, contenido):
+        return {"kind": "StudentProfile", "content": contenido}
+
+    async def test_el_codigo_se_lee_de_dentro_del_sobre(self):
+        store = FakeStore(self._sobre({**SEIS_PUNTUACIONES, "riasec_code": "IRC"}))
+
+        assert (await leer_perfil_para_la_puerta(store, USUARIO)).riasec_code == "IRC"
+
+    async def test_la_completitud_se_cuenta_sobre_el_contenido(self):
+        store = FakeStore(
+            self._sobre({"name": "Ana", "age": 17, **SEIS_PUNTUACIONES, "riasec_code": "IRC"})
+        )
+
+        puerta = await leer_perfil_para_la_puerta(store, USUARIO)
+
+        assert puerta.profile_completeness == 0.67
+
+    async def test_el_sobre_sin_abrir_daba_perfil_vacio(self):
+        """La forma exacta del fallo, fijada para que no vuelva.
+
+        Si alguien quitara el desempaquetado, este es el test que lo dice: el
+        mismo perfil que el test de arriba lee con codigo y 0.67, leido sin
+        abrir el sobre sale como PERFIL_VACIO.
+        """
+        from src.models.profile import StudentProfile
+
+        sobre = self._sobre({**SEIS_PUNTUACIONES, "riasec_code": "IRC"})
+
+        # Valida sin protestar, y sale un perfil que no es el de nadie.
+        colado = StudentProfile.model_validate(sobre)
+
+        assert colado.has_riasec_profile is False
+        assert colado.profile_completeness == 0.0
+
+    async def test_un_perfil_suelto_se_sigue_leyendo(self):
+        # Lo que queda si algo escribio en el namespace antes de que el
+        # extractor pasara por primera vez.
+        store = FakeStore({**SEIS_PUNTUACIONES, "riasec_code": "IRC"})
+
+        assert (await leer_perfil_para_la_puerta(store, USUARIO)).riasec_code == "IRC"
+
+    async def test_un_sobre_vacio_por_dentro_es_perfil_vacio(self):
+        store = FakeStore({"kind": "StudentProfile", "content": {}})
+
+        assert await leer_perfil_para_la_puerta(store, USUARIO) == PERFIL_VACIO
+
+
 async def test_el_store_caido_no_tumba_el_turno():
     # Un informe que no se puede emitir es recuperable; una excepcion a mitad
     # de turno se lleva por delante la conversacion entera.

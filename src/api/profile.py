@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from src.auth import AuthContext, require_auth
+from src.memory.profile_envelope import con_campos, perfil_de
 
 logger = logging.getLogger(__name__)
 
@@ -73,15 +74,19 @@ def _namespace(user_id: str) -> tuple[str, ...]:
     return tuple(part.replace("{user_id}", user_id) for part in _NAMESPACE)
 
 
-async def _leer_perfil(store: Any, user_id: str) -> tuple[str | None, dict[str, Any]]:
-    """Devuelve ``(clave, perfil)``; clave ``None`` cuando aun no hay ninguno."""
+async def _leer_item(store: Any, user_id: str) -> tuple[str | None, Any]:
+    """Devuelve ``(clave, item)``; clave ``None`` cuando aun no hay ninguno.
+
+    El **item**, no el perfil: es lo que hay que conservar para volver a
+    escribir sin tirar el sobre de langmem. Para leer el perfil de dentro,
+    `perfil_de`. Ver `src.memory.profile_envelope`.
+    """
     if store is None:
-        return None, {}
+        return None, None
     items = await store.asearch(_namespace(user_id), limit=1)
     if not items:
-        return None, {}
-    valor = items[0].value
-    return items[0].key, dict(valor) if isinstance(valor, dict) else {}
+        return None, None
+    return items[0].key, items[0].value
 
 
 @router.get("")
@@ -93,9 +98,13 @@ async def get_profile(
 
     Devuelve ``profile: null`` cuando todavia no hay nada extraido, que es el
     estado normal antes de la primera conversacion.
+
+    Sale el perfil, no el sobre: hasta ahora esta ruta devolvia
+    ``{"kind": "StudentProfile", "content": {...}}``, y la pantalla que la
+    consume buscaba los campos en la raiz y los pintaba vacios.
     """
-    _, perfil = await _leer_perfil(request.app.state.store, auth.user_id)
-    return {"profile": perfil or None}
+    _, item = await _leer_item(request.app.state.store, auth.user_id)
+    return {"profile": perfil_de(item) or None}
 
 
 @router.put("/preferences")
@@ -118,10 +127,14 @@ async def put_preferences(
         # vez de aceptar la escritura y perderla en silencio.
         return {"profile": None, "persisted": False}
 
-    clave, perfil = await _leer_perfil(store, auth.user_id)
-    perfil.update(payload.model_dump())
+    clave, item = await _leer_item(store, auth.user_id)
+    # Las preferencias van DENTRO del sobre. Escritas en la raiz no las veia
+    # ni la completitud de D8 ni el extractor, que es el que mantiene el
+    # perfil de debajo. Ver `src.memory.profile_envelope`.
+    nuevo = con_campos(item, payload.model_dump())
+    perfil = perfil_de(nuevo)
 
-    await store.aput(_namespace(auth.user_id), clave or _CLAVE_INICIAL, perfil)
+    await store.aput(_namespace(auth.user_id), clave or _CLAVE_INICIAL, nuevo)
     logger.info(
         "profile_preferences_updated user_id=%r fields=%r",
         auth.user_id,
