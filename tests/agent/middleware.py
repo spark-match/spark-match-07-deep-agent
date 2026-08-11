@@ -142,10 +142,14 @@ class TestAssessmentOnceMiddleware:
 
         prior_call = ToolCall(name=ASSESSMENT_TOOL_NAME, args={}, id="c1")
         prior_ai = AIMessage(content="calling assessment", tool_calls=[prior_call])
+        # La respuesta va incluida a proposito: lo que bloquea un reintento es
+        # una evaluacion HECHA, no un intento suelto. Sin ella este historial
+        # es el de un turno que se murio a medias, y ahi hay que dejar pasar.
+        prior_ok = ToolMessage(content='{"riasec_code": "RIC"}', tool_call_id="c1")
 
         class FakeRequest:
             tool_call = {"name": ASSESSMENT_TOOL_NAME, "id": "c2"}
-            state = {"messages": [prior_ai]}
+            state = {"messages": [prior_ai, prior_ok]}
 
         called = [False]
 
@@ -176,6 +180,106 @@ class TestAssessmentOnceMiddleware:
         result = mw.wrap_tool_call(FakeRequest(), fake_handler)
         assert called[0] is True
         assert result == "ok"
+
+
+class TestElGuardNoSeCuentaASiMismo:
+    """Los dos fallos que dejaron a un estudiante sin poder emitir informe.
+
+    Medidos en dev el 2026-08-11: el modelo emite la llamada a las 04:18:29 y
+    a las 04:18:32 el guard la rechaza por repetida. Era la unica de la
+    conversacion.
+    """
+
+    def _pedir(self, id_actual, messages):
+        mw = AssessmentOnceMiddleware()
+
+        class FakeRequest:
+            tool_call = {"name": ASSESSMENT_TOOL_NAME, "id": id_actual}
+            state = {"messages": messages}
+
+        paso = [False]
+
+        def handler(req):
+            paso[0] = True
+            return "ok"
+
+        resultado = mw.wrap_tool_call(FakeRequest(), handler)
+        return paso[0], resultado
+
+    def _llamada(self, cid):
+        return AIMessage(
+            content="", tool_calls=[ToolCall(name=ASSESSMENT_TOOL_NAME, args={}, id=cid)]
+        )
+
+    def test_la_llamada_en_curso_ya_esta_en_el_historial_y_no_cuenta(self):
+        """Cuando corre el wrapper, el ``AIMessage`` con esta misma llamada ya
+        esta en el estado. Contarlo hacia que la primera se viera a si misma."""
+        paso, _ = self._pedir("c1", [HumanMessage(content="hola"), self._llamada("c1")])
+
+        assert paso is True
+
+    def test_un_intento_sin_respuesta_no_bloquea_el_reintento(self):
+        """Asi acabo el turno que murio con `GraphRecursionError`: la llamada
+        quedo en el historial y la respuesta no llego nunca."""
+        historial = [self._llamada("c0"), self._llamada("c1")]
+
+        paso, _ = self._pedir("c1", historial)
+
+        assert paso is True
+
+    def test_un_intento_que_fallo_tampoco(self):
+        historial = [
+            self._llamada("c0"),
+            ToolMessage(content="Error: lo que sea", tool_call_id="c0", status="error"),
+            self._llamada("c1"),
+        ]
+
+        paso, _ = self._pedir("c1", historial)
+
+        assert paso is True
+
+    def test_ni_uno_que_rechazo_este_mismo_guard(self):
+        """El texto del rechazo dice «si el resultado se perdio, pide al
+        usuario que repita el assessment». Si el propio rechazo contara, esa
+        frase mandaria a un sitio del que no se puede volver."""
+        historial = [
+            self._llamada("c0"),
+            ToolMessage(
+                content=f"Error: {ASSESSMENT_TOOL_NAME} was already called",
+                tool_call_id="c0",
+            ),
+            self._llamada("c1"),
+        ]
+
+        paso, _ = self._pedir("c1", historial)
+
+        assert paso is True
+
+    def test_una_evaluacion_hecha_si_bloquea(self):
+        """Lo que el guard existe para evitar sigue evitado."""
+        historial = [
+            self._llamada("c0"),
+            ToolMessage(content='{"riasec_code": "RIC"}', tool_call_id="c0"),
+            self._llamada("c1"),
+        ]
+
+        paso, resultado = self._pedir("c1", historial)
+
+        assert paso is False
+        assert isinstance(resultado, ToolMessage)
+
+    def test_el_rechazo_se_marca_como_error(self):
+        """Para que un rechazo de este guard no se confunda mas adelante con
+        una evaluacion buena -- que es como se enredo esto la primera vez."""
+        historial = [
+            self._llamada("c0"),
+            ToolMessage(content='{"riasec_code": "RIC"}', tool_call_id="c0"),
+            self._llamada("c1"),
+        ]
+
+        _, resultado = self._pedir("c1", historial)
+
+        assert resultado.status == "error"
 
 
 class TestAssessmentOnceMiddlewareAsync:
@@ -213,10 +317,11 @@ class TestAssessmentOnceMiddlewareAsync:
 
         prior_call = ToolCall(name=ASSESSMENT_TOOL_NAME, args={}, id="c1")
         prior_ai = AIMessage(content="calling assessment", tool_calls=[prior_call])
+        prior_ok = ToolMessage(content='{"riasec_code": "RIC"}', tool_call_id="c1")
 
         class FakeRequest:
             tool_call = {"name": ASSESSMENT_TOOL_NAME, "id": "c2"}
-            state = {"messages": [prior_ai]}
+            state = {"messages": [prior_ai, prior_ok]}
 
         called = [False]
 
