@@ -34,6 +34,7 @@ from src.config import get_settings
 from src.memory import build_reflection_executor
 from src.observability.langsmith import configure_langsmith
 from src.persistence import build_persistence
+from src.reports import pdf_rendering_available
 from src.threads import acquire_run_lease, record_thread_activity, release_run_lease
 from src.utils import setup_logging
 
@@ -63,6 +64,42 @@ AG_UI_HEALTH_PATH = AG_UI_PATH + "/health"
 STREAM_FAILURE_MESSAGE = "El orientador no pudo terminar de responder. Intentalo de nuevo."
 
 
+def comprobar_el_render_de_pdf() -> bool:
+    """Deja dicho al arrancar si este contenedor puede emitir informes.
+
+    WeasyPrint se importa dentro de la funcion (ver ``src/reports/pdf.py``),
+    asi que una imagen sin pango/cairo arranca igual y conversa igual: lo
+    unico que falla es el informe, y falla en el primer intento real de un
+    estudiante. Peor todavia, ``upload_report`` renderiza ANTES de subir nada,
+    asi que ese fallo no deja un informe sin PDF -- no deja informe.
+
+    El riesgo no es teorico: CI prueba el render en x86 con el pango del
+    runner, mientras la imagen de runtime es arm64 y trae una lista de
+    paquetes elegida a mano en el Dockerfile. Son entornos distintos, y esa
+    lista es exactamente el tipo de linea que alguien recorta al adelgazar la
+    imagen.
+
+    Solo loguea, a proposito. Condicionar el arranque a esto seria cambiar
+    "se pierde el informe" por "se pierde el producto entero", que es justo lo
+    que el import diferido de ``src/reports/pdf.py`` evita.
+
+    Returns:
+        Si el render esta disponible. Lo devuelve para que se pueda comprobar
+        sin leer logs.
+    """
+    disponible = pdf_rendering_available()
+    if disponible:
+        logger.info("Renderizado de PDF disponible")
+    else:
+        logger.error(
+            "Renderizado de PDF NO disponible: faltan las bibliotecas nativas de "
+            "WeasyPrint (libpango-1.0-0, libpangoft2-1.0-0, libcairo2, "
+            "libgdk-pixbuf-2.0-0). El agente funciona, pero NINGUN informe se "
+            "podra emitir hasta que la imagen las incluya -- ver Dockerfile."
+        )
+    return disponible
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Application lifespan — initialize logging and agent on startup."""
@@ -80,6 +117,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # LangSmith tracing. Idempotent: pushes SPARK_* settings into the
     # LANGSMITH_* env vars that langchain-aws / deepagents read automatically.
     configure_langsmith()
+
+    comprobar_el_render_de_pdf()
 
     # Checkpointer (short-term, per-thread_id) + store (long-term, per-user
     # once Sprint 7 wires real user_ids). Built once for the app lifetime so
