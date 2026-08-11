@@ -1,10 +1,10 @@
 """El informe como Markdown (ADR-019, fase 4').
 
-Por que Markdown en medio y no HTML directo: el informe se entrega en PDF pero
-tambien se guarda en JSON, y algun dia se vera en la web. Markdown es el unico
-formato de los tres que se lee entero en una terminal cuando algo sale raro, y
-el diff de una plantilla Markdown en una revision se entiende sin abrir un
-navegador.
+Por que Markdown: el informe se entrega en PDF y se guarda en JSON, y ninguno
+de los dos se lee en una terminal cuando algo sale raro. Esta version si. El
+PDF ya no se construye desde aqui --tiene su propia estructura en `html.py`,
+con portada y fichas que una tabla de Markdown no sabe representar-- asi que
+este fichero es el volcado legible del informe, y no tiene mas trabajo que ese.
 
 **Aqui no se escribe prosa.** Todo el texto libre de este fichero es
 estructura: encabezados, etiquetas de campo y las notas al pie sobre la
@@ -12,106 +12,35 @@ procedencia. El retrato del perfil y las explicaciones vienen ya escritas
 dentro del `OrientationReport` (ver `src/tools/report/handler.py`), y esa
 frontera se mantiene tambien aqui.
 
-Formato de cifras: separador de miles con coma y decimales con punto, que es
-la convencion peruana y la que ya usa la web. Un informe que escribe las
-cantidades distinto que la pantalla de la que salio parece de otro sitio.
+Como se escribe cada cifra vive en `cifras.py`, compartido con el PDF: si el
+volcado y el documento formatean distinto, el que este depurando no sabe cual
+de los dos miente.
 """
 
 from __future__ import annotations
 
 from src.models.report import OrientationReport, ReportCareer
-
-# Como se llama cada cifra en el informe, y en que orden se listan. El orden
-# es deliberado: primero lo que dura (el compromiso), luego lo que se gana
-# (el motivo), luego lo que cuesta y lo dificil que es entrar (las dos
-# barreras). Es el orden en que un estudiante hace las preguntas.
-_FILAS: tuple[tuple[str, str], ...] = (
-    ("duration_years", "Duración"),
-    ("monthly_income", "Ingreso mensual al egresar"),
-    ("annual_cost", "Costo anual"),
-    ("admission_rate", "Admisión"),
+from src.reports.cifras import (
+    FILAS,
+    MARCA_ESTIMADO,
+    afinidades,
+    gestion,
+    nombre_legible,
+    valor_marcado,
 )
 
-_MARCA_ESTIMADO = "estimado"
 
-# El CSV guarda la gestion en femenino ("Publica", "Privada"), que concuerda
-# con "universidad" y chirria con "instituto": "Instituto publica". Como el
-# informe se imprime y se ensena, la concordancia no es un detalle.
-_EN_MASCULINO = {"pública": "público", "privada": "privado"}
-
-# Los filtros viajan con su nombre de codigo. Imprimirlos tal cual pondria
-# "Se filtro por management_type" en un documento que lee un chico de
-# dieciseis anos.
-_NOMBRE_DEL_FILTRO = {
-    "region": "la región",
-    "management_type": "si es pública o privada",
-    "institution_type": "si es universidad o instituto",
-    "max_annual_cost": "el presupuesto",
-}
-
-
-def _gestion(carrera: ReportCareer) -> str:
-    """La gestion concordando con el tipo de institucion."""
-    valor = carrera.management_type.lower()
-    if carrera.institution_type.lower().startswith("instituto"):
-        return _EN_MASCULINO.get(valor, valor)
-    return valor
-
-
-def _nombre_legible(filtro: str) -> str:
-    return _NOMBRE_DEL_FILTRO.get(filtro, filtro)
-
-
-def _soles(cantidad: float) -> str:
-    """S/ 4,261 — sin decimales, que en estas magnitudes son ruido."""
-    return f"S/ {cantidad:,.0f}"
-
-
-def _anios(cantidad: float) -> str:
-    """5 años, o 3.5 años cuando la cifra no es redonda."""
-    if abs(cantidad - round(cantidad)) < 0.05:
-        entero = round(cantidad)
-        return f"{entero} año" if entero == 1 else f"{entero} años"
-    return f"{cantidad:.1f} años"
-
-
-def _porcentaje(valor: float) -> str:
-    """La tasa de admision ya viaja en porcentaje: 0-100, no 0-1.
-
-    Multiplicarla por cien --que es lo que se hacia-- convertia un 17% en un
-    1700%. Ver la descripcion del campo en :class:`ReportCareer`.
-    """
-    return f"{valor:.0f}%"
-
-
-def _valor(carrera: ReportCareer, campo: str) -> str:
-    bruto = getattr(carrera, campo)
-    if campo == "duration_years":
-        texto = _anios(bruto)
-    elif campo == "admission_rate":
-        texto = _porcentaje(bruto)
-    else:
-        texto = _soles(bruto)
-
-    # Un dato imputado marcado como tal es la diferencia entre informar y
-    # aparentar. La lista `estimated` llega hasta aqui justo para esto.
-    if campo in carrera.estimated:
-        return f"{texto} ({_MARCA_ESTIMADO})"
-    return texto
-
-
-def _ficha(indice: int, carrera: ReportCareer) -> list[str]:
-    afinidad = f"{carrera.match_score:.0f}%"
+def _ficha(indice: int, carrera: ReportCareer, afinidad: str) -> list[str]:
     lineas = [
         f"### {indice}. {carrera.career} — {afinidad} de afinidad",
         "",
         f"{carrera.institution} · {carrera.location} · "
-        f"{carrera.institution_type} {_gestion(carrera)}",
+        f"{carrera.institution_type} {gestion(carrera)}",
         "",
         "| Dato | Valor |",
         "| --- | --- |",
     ]
-    lineas += [f"| {etiqueta} | {_valor(carrera, campo)} |" for campo, etiqueta in _FILAS]
+    lineas += [f"| {etiqueta} | {valor_marcado(carrera, campo)} |" for campo, etiqueta in FILAS]
     lineas += ["", carrera.insight, ""]
     return lineas
 
@@ -131,7 +60,7 @@ def _procedencia(informe: OrientationReport) -> list[str]:
         f"MINEDU. Criterio de puntuación `{informe.scoring_version}`.",
         f"- Las cifras de duración, ingreso, costo y admisión salen de "
         f"{informe.dataset_source}, datos del {informe.dataset_snapshot_date.isoformat()}.",
-        f"- Lo marcado como «{_MARCA_ESTIMADO}» **no es un dato de ese programa**: es la "
+        f"- Lo marcado como «{MARCA_ESTIMADO}» **no es un dato de ese programa**: es la "
         "mediana de su familia de carrera, que se usa para rellenar lo que el portal no "
         "publicó.",
         "- El código RIASEC de cada carrera lo asignó un modelo de lenguaje. Orienta; no "
@@ -140,10 +69,10 @@ def _procedencia(informe: OrientationReport) -> list[str]:
 
     if informe.filters_applied:
         recortes = ", ".join(
-            f"sin {_nombre_legible(nombre)} habría {cuantos:,}"
+            f"sin {nombre_legible(nombre)} habría {cuantos:,}"
             for nombre, cuantos in sorted(informe.candidates_without_each_filter.items())
         )
-        aplicados = ", ".join(_nombre_legible(f) for f in informe.filters_applied)
+        aplicados = ", ".join(nombre_legible(f) for f in informe.filters_applied)
         notas += [
             f"- Se filtró por {aplicados}, y eso dejó {informe.total_candidates:,} "
             f"programas de todo el catálogo ({recortes}). Cambiar un filtro cambia "
@@ -159,7 +88,7 @@ def _procedencia(informe: OrientationReport) -> list[str]:
 
 
 def report_to_markdown(informe: OrientationReport) -> str:
-    """El informe completo en Markdown, listo para convertir a HTML."""
+    """El informe completo en Markdown."""
     lineas = [
         "# Informe de orientación vocacional",
         "",
@@ -173,8 +102,14 @@ def report_to_markdown(informe: OrientationReport) -> str:
         "",
     ]
 
-    for indice, carrera in enumerate(informe.careers, start=1):
-        lineas += _ficha(indice, carrera)
+    # Las afinidades se calculan de una vez y no carrera a carrera: si dos
+    # redondean igual hay que enseñar un decimal, y eso no se sabe mirando una
+    # sola. Ver `cifras.afinidades`.
+    etiquetas = afinidades(informe.careers)
+    for indice, (carrera, afinidad) in enumerate(
+        zip(informe.careers, etiquetas, strict=True), start=1
+    ):
+        lineas += _ficha(indice, carrera, afinidad)
 
     lineas += _procedencia(informe)
 
