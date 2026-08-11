@@ -27,6 +27,7 @@ from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.pii import PIIRedactionMiddleware
 from src.agent.report_gate import ReportGateMiddleware
 from src.agent.router_middleware import IntentRouterMiddleware
+from src.agent.subagent_carryover import SubagentCarryoverMiddleware
 from src.agent.subagent_events import SubagentEventsMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
@@ -215,6 +216,15 @@ def create_spark_agent(
       entero -- 44,9 s medidos en dev el 2026-08-11. Falla abierto a proposito:
       ver ``src/agent/report_gate.py``.
 
+    Lo que se produce dentro de un subagente:
+    - ``SubagentCarryoverMiddleware`` abre un buzon alrededor de cada
+      delegacion y vuelca lo que se escriba en el sobre el ``ToolMessage`` que
+      si se persiste. Hoy lleva una sola cosa, el id del informe emitido: sin
+      eso, al recargar la pagina el enlace al informe desaparecia, porque
+      ``publish_orientation_report`` corre dentro del subagente de report y de
+      ahi no vuelve mas que el texto final. Ver
+      ``src/agent/subagent_carryover.py``.
+
     Visibilidad de la delegacion:
     - ``SubagentEventsMiddleware`` emite un par de eventos custom alrededor
       de cada llamada a la herramienta ``task``, que es como deepagents
@@ -323,6 +333,11 @@ def create_spark_agent(
         # tiene hooks de modelo, asi que ponerlo aqui no altera el orden de
         # Guardrails -> ContentFilter.
         SubagentEventsMiddleware(),
+        # Justo por dentro de los eventos: el buzon tiene que estar abierto
+        # mientras el subagente corre, y cerrarse antes de que nadie mire el
+        # resultado. Aparte de `SubagentEventsMiddleware` porque aquel solo
+        # observa y esto cambia lo que se persiste.
+        SubagentCarryoverMiddleware(),
         GuardrailsMiddleware(),
         ContentFilterMiddleware(classifier_model=fast_model_resolved),
     ]

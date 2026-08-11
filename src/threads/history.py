@@ -39,11 +39,24 @@ payload:
 La forma es la misma que emite el stream en vivo (``subagent`` con la
 clave del especialista, ``toolCallId``), para que el frontend tenga un
 solo modelo y no dos caminos que se separen con el tiempo.
+
+## El informe emitido tambien sale, y no estaba en ningun mensaje
+
+Un turno que emite un informe no deja rastro de su id en la conversacion:
+``publish_orientation_report`` corre dentro del subagente de report, y de
+un subagente no vuelve mas que su texto final. En vivo lo cuenta el evento
+``spark.report.ready``, pero al recargar la pagina el enlace desaparecia
+aunque el informe existiera. Ahora el id viaja pegado al ``ToolMessage`` de
+la delegacion (ver ``src/agent/subagent_carryover.py``) y sale de aqui como
+``report_id`` en el mensaje que cierra el turno -- el mismo que lleva los
+chips, que es donde el estudiante lo vio la primera vez.
 """
 
 from __future__ import annotations
 
 from typing import Any, Protocol
+
+from src.agent.subagent_carryover import INFORME, lo_recogido
 
 # Nombre con el que deepagents registra la herramienta de delegacion.
 _HERRAMIENTA_DE_DELEGACION = "task"
@@ -83,15 +96,28 @@ class SupportsGetState(Protocol):
     async def aget_state(self, config: dict[str, Any]) -> Any: ...
 
 
-def _anotar_resultado(pendientes: dict[str, dict[str, Any]], message: Any) -> None:
+def _anotar_resultado(
+    pendientes: dict[str, dict[str, Any]],
+    message: Any,
+    turno: dict[str, Any],
+) -> None:
     """Cierra el estado de la llamada a la que responde este ToolMessage.
 
     ``status`` es "error" cuando la herramienta reviento; cualquier otra
     cosa cuenta como exito.
+
+    Y recoge lo que la delegacion se trajo de dentro del subagente, que hoy es
+    el id del informe emitido. No sale de los argumentos ni del contenido: se
+    lo cuelga el middleware de `carryover` a este mismo mensaje, porque de un
+    subagente no vuelve mas que su texto final.
     """
     actividad = pendientes.get(str(getattr(message, "tool_call_id", "")))
     if actividad is not None:
         actividad["ok"] = getattr(message, "status", None) != "error"
+
+    report_id = lo_recogido(message).get(INFORME)
+    if isinstance(report_id, str) and report_id:
+        turno["report_id"] = report_id
 
 
 def _entrada_de_usuario(message: Any) -> dict[str, Any]:
@@ -105,11 +131,13 @@ def _entrada_de_usuario(message: Any) -> dict[str, Any]:
 def _entrada_del_asistente(
     message: Any,
     pendientes: dict[str, dict[str, Any]],
+    turno: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Entrada del historial para un mensaje del asistente, o ``None``.
 
     Registra en ``pendientes`` las llamadas que abre este mensaje y, si
-    ademas CIERRA el turno, se las lleva consigo.
+    ademas CIERRA el turno, se las lleva consigo -- junto con el informe que
+    se haya emitido durante el.
     """
     llamadas = getattr(message, "tool_calls", None) or []
     for tool_call in llamadas:
@@ -137,6 +165,13 @@ def _entrada_del_asistente(
     if pendientes and not llamadas:
         entrada["activity"] = list(pendientes.values())
         pendientes.clear()
+
+    # El enlace al informe se cuelga del MISMO mensaje que los chips y por la
+    # misma razon: es donde el estudiante lo vio la primera vez. Ponerlo en el
+    # preambulo -- ese "dame un momento" que precede a la delegacion -- lo
+    # dejaria por encima de la frase que le anuncia que ya esta listo.
+    if not llamadas and turno.get("report_id"):
+        entrada["report_id"] = turno.pop("report_id")
 
     return entrada
 
@@ -228,6 +263,8 @@ async def load_thread_messages(
     history: list[dict[str, Any]] = []
     # Actividad acumulada del turno en curso, en orden de llamada.
     pendientes: dict[str, dict[str, Any]] = {}
+    # Lo demas que el turno produjo y no es una llamada: hoy, el informe.
+    turno: dict[str, Any] = {}
 
     # Un `match` sobre el tipo, y cada rama en su funcion: la version que
     # hacia todo esto aqui dentro llegaba a complejidad cognitiva 24 sobre
@@ -236,7 +273,7 @@ async def load_thread_messages(
     for message in messages:
         match getattr(message, "type", ""):
             case "tool":
-                _anotar_resultado(pendientes, message)
+                _anotar_resultado(pendientes, message, turno)
             case "human":
                 # Empieza un turno nuevo. Lo que quede pendiente es de un
                 # turno cortado a medias -- cerrar la pestaña durante la
@@ -244,9 +281,10 @@ async def load_thread_messages(
                 # debajo parece un fallo de la aplicacion, no un turno
                 # interrumpido.
                 pendientes.clear()
+                turno.clear()
                 history.append(_entrada_de_usuario(message))
             case "ai":
-                entrada = _entrada_del_asistente(message, pendientes)
+                entrada = _entrada_del_asistente(message, pendientes, turno)
                 if entrada is not None:
                     history.append(entrada)
             case _:
