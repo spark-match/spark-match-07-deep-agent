@@ -13,6 +13,8 @@ Structured return schema:
 
 from typing import Any, TypedDict
 
+from src.models.riasec import RIASEC_TYPE_NAMES
+
 
 class RiasecScore(TypedDict):
     """A single RIASEC dimension with its score."""
@@ -33,14 +35,10 @@ class RiasecProfile(TypedDict):
 
 # --- Constants ---
 
-_TYPE_NAMES: dict[str, str] = {
-    "R": "Realista",
-    "I": "Investigativo",
-    "A": "Artístico",
-    "S": "Social",
-    "E": "Emprendedor",
-    "C": "Convencional",
-}
+# El mapa vive en `src/models/riasec.py`: el informe en PDF tambien lo necesita
+# para desplegar el codigo de la portada, y dos copias divergen en cuanto
+# alguien corrige una tilde en una sola.
+_TYPE_NAMES = RIASEC_TYPE_NAMES
 
 _VALID_LETTERS = set(_TYPE_NAMES.keys())
 

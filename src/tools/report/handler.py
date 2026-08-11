@@ -179,6 +179,9 @@ def build_orientation_report_handler(
             # sitio que la etiqueta, asi que no pueden contradecirla.
             dataset_source=DATASET_NAME,
             dataset_snapshot_date=date.fromisoformat(SNAPSHOT_DATE),
+            # Del reloj y no del modelo, como el resto de lo verificable de
+            # este documento. Va en la portada.
+            issued_on=date.today(),
         ).model_dump(mode="json"),
         "errors": None,
     }

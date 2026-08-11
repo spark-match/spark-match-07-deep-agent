@@ -72,6 +72,10 @@ def informe(**overrides: object) -> OrientationReport:
         "scoring_version": "1.0.0",
         "dataset_source": "Ponte en Carrera (MINEDU)",
         "dataset_snapshot_date": date(2026, 6, 13),
+        # Distinta de `dataset_snapshot_date` a proposito: una es la edad de
+        # las cifras y la otra la del documento, y un fixture donde coinciden
+        # deja pasar el dia en que alguien las cruce.
+        "issued_on": date(2026, 8, 11),
     }
     base.update(overrides)
     return OrientationReport(**base)  # type: ignore[arg-type]

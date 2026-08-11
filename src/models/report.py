@@ -140,6 +140,19 @@ class OrientationReport(BaseModel):
     dataset_snapshot_date: date = Field(
         description="Fecha del corte de datos con el que se genero el informe."
     )
+    # Opcional a proposito, y no porque de igual: los informes emitidos antes
+    # de que existiera este campo estan en S3 y se tienen que poder releer. Un
+    # informe viejo sin fecha de emision se enseña sin ella, que es lo que se
+    # sabe de el; ponerle la de hoy al abrirlo seria inventarse un dato.
+    issued_on: date | None = Field(
+        default=None,
+        description=(
+            "Dia en que se emitio, para la portada. NO es "
+            "`dataset_snapshot_date`: esa es la edad de las cifras y esta es la "
+            "edad del documento, y en un informe que se guarda meses las dos "
+            "hacen falta por separado."
+        ),
+    )
 
 
 __all__ = ["SCHEMA_VERSION", "OrientationReport", "ReportCareer"]

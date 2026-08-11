@@ -82,9 +82,15 @@ FROM --platform=linux/arm64 python:3.14-slim-bookworm AS runtime
 #
 # `fonts-inter` es la misma tipografia que usa la web. El frontend la trae de
 # Google Fonts por `@import`, cosa que aqui no sirve: el contenedor no sale a
-# internet y no debe hacerlo en mitad de un render. Fraunces (los titulares de
-# la web) no esta empaquetada en Debian, asi que el PDF va todo en Inter --
-# ver la cabecera de `src/reports/report.css`.
+# internet y no debe hacerlo en mitad de un render.
+#
+# La OTRA tipografia del producto, Fraunces, NO se instala aqui y no es un
+# olvido: no esta empaquetada en Debian. Viaja en el repositorio, en
+# `src/reports/fonts/`, y la hoja de estilos la declara con @font-face contra
+# una ruta relativa. Llega a la imagen con el `COPY src/` de la etapa anterior,
+# asi que si algun dia alguien excluye los binarios del contexto de build, los
+# titulares del informe se caeran a la serif por defecto sin una sola linea en
+# el log. Ver la cabecera de `src/reports/report.css`.
 #
 # --no-install-recommends: sin el, `fonts-inter` arrastra media coleccion de
 # fuentes del sistema.
