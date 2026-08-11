@@ -13,9 +13,15 @@ from src.tools.web_search.tool import web_search
 class TestToolWrappers:
     """Tests verifying the @tool wrappers are correctly wired."""
 
-    def test_assessment_tool_unwraps_data(self):
-        """The @tool wrapper exposes handler's data dict directly to the LLM."""
-        result = evaluate_riasec_profile.invoke(
+    async def test_assessment_tool_unwraps_data(self):
+        """The @tool wrapper exposes handler's data dict directly to the LLM.
+
+        ``ainvoke`` and not ``invoke``: the wrapper became ``async def`` when
+        it started persisting the measured profile (``src/memory/riasec_persist.py``),
+        and ``StructuredTool`` refuses sync invocation once only a coroutine
+        is registered.
+        """
+        result = await evaluate_riasec_profile.ainvoke(
             {
                 "realistic": 2,
                 "investigative": 8,
