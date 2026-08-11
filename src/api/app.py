@@ -420,12 +420,19 @@ async def ag_ui_endpoint(
     # the "{user_id}" langmem namespace substitution everywhere.
     request_agent = agent.clone()
     request_agent.config = {
+        # Fuera de `configurable` a proposito: `recursion_limit` es una clave
+        # de primer nivel del RunnableConfig. Dentro de `configurable` LangGraph
+        # la ignora en silencio y se queda con su default de 25 -- que es la
+        # mitad de `max_turns`, asi que el corte limpio de MaxTurnsMiddleware
+        # no llegaba nunca y el turno moria con GraphRecursionError a media
+        # frase. Ver el comentario de `graph_recursion_limit` en settings.
+        "recursion_limit": settings.graph_recursion_limit,
         "configurable": {
             "thread_id": thread_id,
             "user_id": auth.user_id,
             "role": auth.role,
             "email": auth.email,
-        }
+        },
     }
 
     async def eventos_publicables() -> AsyncIterator[Any]:
