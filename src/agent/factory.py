@@ -25,6 +25,7 @@ from src.agent.memory_middleware import (
 )
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.pii import PIIRedactionMiddleware
+from src.agent.report_gate import ReportGateMiddleware
 from src.agent.router_middleware import IntentRouterMiddleware
 from src.agent.subagent_events import SubagentEventsMiddleware
 from src.agent.subagents import (
@@ -206,6 +207,14 @@ def create_spark_agent(
       non-goal note (``/memories/AGENTS.md`` writes via deepagents' own
       filesystem tools are not covered).
 
+    La puerta del informe, adelantada:
+    - ``ReportGateMiddleware`` comprueba antes de delegar en el subagente de
+      report lo que el backend iba a comprobar al final: RIASEC, completitud,
+      tope diario y generacion en curso. Sin eso, un estudiante en su tope de
+      tres al dia se enteraba despues de que el subagente escribiera el informe
+      entero -- 44,9 s medidos en dev el 2026-08-11. Falla abierto a proposito:
+      ver ``src/agent/report_gate.py``.
+
     Visibilidad de la delegacion:
     - ``SubagentEventsMiddleware`` emite un par de eventos custom alrededor
       de cada llamada a la herramienta ``task``, que es como deepagents
@@ -301,11 +310,18 @@ def create_spark_agent(
     # are opt-in on store being present.
     memory_sources = ["/memories/AGENTS.md"] if store is not None else None
     middleware: list[Any] = [
-        # Primero de la lista, o sea el mas externo de los que envuelven
-        # llamadas a herramientas: asi la duracion que reporta es la que el
-        # estudiante espera de verdad, con la redaccion de PII y el guard de
-        # assessment ya incluidos dentro. No tiene hooks de modelo, asi que
-        # ponerlo aqui no altera el orden de Guardrails -> ContentFilter.
+        # Por delante de los eventos, o sea el mas externo de todos. Un rechazo
+        # de la puerta no debe emitir el par `spark.subagent.*`: anunciaria un
+        # especialista que nunca llego a arrancar, y el estudiante veria
+        # aparecer y desaparecer un indicador de trabajo inexistente. De paso,
+        # la duracion que reporta el middleware de abajo sigue siendo la del
+        # subagente y no incluye esta consulta.
+        ReportGateMiddleware(),
+        # Primero de los que envuelven llamadas a herramientas de verdad: asi
+        # la duracion que reporta es la que el estudiante espera, con la
+        # redaccion de PII y el guard de assessment ya incluidos dentro. No
+        # tiene hooks de modelo, asi que ponerlo aqui no altera el orden de
+        # Guardrails -> ContentFilter.
         SubagentEventsMiddleware(),
         GuardrailsMiddleware(),
         ContentFilterMiddleware(classifier_model=fast_model_resolved),
