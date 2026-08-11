@@ -8,17 +8,25 @@ cadena, y descarta los mensajes internos. Lo que el subagente llamo, y lo que
 le devolvieron, no llega nunca al checkpoint del grafo padre.
 
 Casi siempre da igual -- es justo el aislamiento que se busca al delegar --
-pero hay cosas que se producen ahi dentro y el estudiante necesita al recargar
-la pagina. La primera es **el id del informe**: ``publish_orientation_report``
-vive en el subagente de report, asi que al refrescar el enlace a su informe
-desaparecia aunque el informe existiera. El evento en vivo
-``spark.report.ready`` lo cuenta mientras pasa; el historial no tenia de donde
-sacarlo.
+pero hay dos cosas que se producen ahi dentro y el estudiante necesita al
+recargar la pagina. Las dos se veian en vivo, porque ``astream_events`` recorre
+el grafo entero, y las dos desaparecian al refrescar, porque el historial se
+reconstruye solo del padre:
+
+- **El id del informe.** ``publish_orientation_report`` vive en el subagente de
+  report, asi que el enlace a su informe desaparecia aunque el informe
+  existiera. El evento en vivo ``spark.report.ready`` lo cuenta mientras pasa;
+  el historial no tenia de donde sacarlo.
+- **Los pasos que dio.** El chip decia "1 paso" donde en vivo se habian visto
+  ocho: los siete de dentro son llamadas del grafo del subagente.
 
 ## El buzon
 
-El padre abre un buzon antes de delegar, la herramienta de dentro escribe en
-el, y el padre lo vacia sobre el ``ToolMessage`` que si se persiste.
+El padre abre un buzon antes de delegar, lo de dentro escribe en el, y el padre
+lo vacia sobre el ``ToolMessage`` que si se persiste. Dos middlewares y en
+sitios distintos: :class:`SubagentCarryoverMiddleware` en el coordinador -- abre
+y vuelca -- y :class:`SubagentStepsMiddleware` **dentro de cada subagente**,
+porque la lista de middleware del coordinador no baja a ellos.
 
 **Es un ContextVar con un diccionario MUTABLE dentro, y esa distincion es todo
 el mecanismo.** Una ``asyncio.Task`` nace con una *copia* del contexto, asi que
@@ -31,6 +39,11 @@ incluyendo el salto a un hilo de ``asyncio.to_thread``.
 serializa el checkpointer con el resto del mensaje, que es la unica propiedad
 que hace falta aqui. La clave propia (:data:`CLAVE`) evita pelearse con lo que
 los proveedores meten ahi.
+
+**Lo que se anota va filtrado, no crudo.** Los pasos pasan por la lista blanca
+de ``src/threads/activity.py`` **al escribir**, y no al leer como hace el
+historial: esto se persiste en el checkpoint, asi que guardar la llamada entera
+y filtrarla despues dejaria los argumentos sin autorizar ya guardados.
 
 **Nada de esto puede tumbar un turno.** Sin buzon abierto -- invocacion directa
 del grafo, tests -- ``anotar`` no hace nada, y un resultado con una forma que no
