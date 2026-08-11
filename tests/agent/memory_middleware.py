@@ -1,5 +1,7 @@
 """Tests for the Sprint 6 memory middlewares (hydration, persist, seed)."""
 
+import logging
+from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -32,6 +34,22 @@ class _FakeExecutor:
 
     def submit(self, payload, *, config, after_seconds):
         self.calls.append({"payload": payload, "config": config, "after_seconds": after_seconds})
+
+
+class _FakeExecutorConFuture(_FakeExecutor):
+    """Como el de arriba, pero devolviendo el ``Future`` que devuelve el de
+    verdad. El test lo resuelve a mano para disparar el callback sin hilos."""
+
+    def __init__(self):
+        super().__init__()
+        # Se queda PENDING a proposito: es el unico estado desde el que
+        # `cancel()` prospera, y ese camino -- el del apagado del servicio --
+        # es justo uno de los que hay que cubrir.
+        self.future = Future()
+
+    def submit(self, payload, *, config, after_seconds):
+        super().submit(payload, config=config, after_seconds=after_seconds)
+        return self.future
 
 
 @dataclass
@@ -212,6 +230,56 @@ class TestProfilePersistMiddleware:
         await mw.aafter_agent({"messages": []}, _FakeRuntimeNoStore())
 
         assert len(executor.calls) == 1
+
+
+class TestUnaExtraccionCaidaSeOye:
+    """Antes no se oia, y por eso costo semanas.
+
+    ``ReflectionExecutor`` deja la excepcion dentro del future y nadie lo
+    mira. La extraccion de perfil podia estar fallando en cada uno de los turnos
+    con el servicio dando `healthy`; el sintoma que llegaba, cuatro capas mas
+    abajo, era "no me deja generar el informe".
+    """
+
+    def test_un_future_que_revienta_deja_un_error_en_el_log(self, caplog):
+        executor = _FakeExecutorConFuture()
+        mw = ProfilePersistMiddleware(executor=executor)
+
+        with caplog.at_level(logging.ERROR, logger="src.agent.memory_middleware"):
+            mw.after_agent({"messages": []}, _FakeRuntimeNoStore())
+            executor.future.set_exception(RuntimeError("bedrock dijo que no"))
+
+        assert "La extraccion de perfil fallo" in caplog.text
+        assert DEFAULT_USER_ID in caplog.text
+
+    def test_un_future_que_termina_bien_no_dice_nada(self, caplog):
+        executor = _FakeExecutorConFuture()
+        mw = ProfilePersistMiddleware(executor=executor)
+
+        with caplog.at_level(logging.ERROR, logger="src.agent.memory_middleware"):
+            mw.after_agent({"messages": []}, _FakeRuntimeNoStore())
+            executor.future.set_result({"ok": True})
+
+        assert caplog.text == ""
+
+    def test_un_future_cancelado_en_el_apagado_no_ensucia_el_log(self, caplog):
+        """`shutdown(cancel_futures=True)` al parar el servicio cancela lo que
+        quede en cola. Eso no es un fallo de extraccion y no debe parecerlo."""
+        executor = _FakeExecutorConFuture()
+        mw = ProfilePersistMiddleware(executor=executor)
+
+        with caplog.at_level(logging.ERROR, logger="src.agent.memory_middleware"):
+            mw.after_agent({"messages": []}, _FakeRuntimeNoStore())
+            executor.future.cancel()
+
+        assert caplog.text == ""
+
+    def test_un_executor_que_no_devuelve_future_no_rompe_el_turno(self):
+        """`_FakeExecutor` devuelve ``None``, como cualquier doble sencillo.
+        El aviso es observacion pura: si no hay de que colgarse, se calla."""
+        mw = ProfilePersistMiddleware(executor=_FakeExecutor())
+
+        assert mw.after_agent({"messages": []}, _FakeRuntimeNoStore()) is None
 
 
 class TestMemorySeedMiddleware:
