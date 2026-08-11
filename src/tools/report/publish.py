@@ -35,6 +35,7 @@ import logging
 import time
 from typing import Any
 
+from src.agent.subagent_events import avisar_informe_listo
 from src.backend import reports_client
 from src.backend.reports_client import BackendNoConfigurado, ErrorDelBackend
 from src.config import get_settings
@@ -249,6 +250,12 @@ async def publish_orientation_report_handler(
         "Informe emitido",
         extra={"report_id": report_id, "generation_ms": generation_ms},
     )
+
+    # El aviso a la pantalla va DESPUES de cerrar la fila, no antes: hasta que
+    # el backend no la cierra, el informe no se puede abrir todavia, y un
+    # boton que lleva a una pantalla vacia es peor que no tener boton.
+    await avisar_informe_listo(report_id, [carrera.career for carrera in informe.careers])
+
     return {
         "status": "success",
         # Deliberadamente escueto: el id para poder enlazarlo, y lo justo para

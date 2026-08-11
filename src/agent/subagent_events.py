@@ -62,6 +62,14 @@ SUBAGENT_TOOL_NAME = "task"
 SUBAGENT_START_EVENT = "spark.subagent.start"
 SUBAGENT_END_EVENT = "spark.subagent.end"
 
+#: Se emite cuando un informe queda registrado y el estudiante ya puede
+#: abrirlo. Existe porque el chat no tenia forma de saberlo: el contenido del
+#: informe no vuelve al contexto a proposito, asi que lo unico que llegaba a
+#: la pantalla era el modelo diciendo "tu informe esta listo" sin nada que
+#: pulsar. El estudiante tenia que adivinar que habia una seccion "Reporte"
+#: en el menu.
+REPORT_READY_EVENT = "spark.report.ready"
+
 # Cuando el modelo llama a ``task`` sin decir a quien. deepagents responde a
 # eso con un mensaje de error y no invoca a nadie, pero el evento se emite
 # igual para que el par start/end siga estando completo.
@@ -183,10 +191,23 @@ class SubagentEventsMiddleware(AgentMiddleware):
             )
 
 
+async def avisar_informe_listo(report_id: str, careers: list[str]) -> None:
+    """Le dice a la pantalla que ya hay un informe que abrir.
+
+    Se traga el fallo igual que el resto de eventos de aqui: esto es un aviso
+    para la interfaz, y que no llegue no puede tumbar un turno en el que el
+    informe ya se emitio correctamente. El peor caso es el de antes, que el
+    estudiante tenga que ir a buscarlo al menu.
+    """
+    await _aemit(REPORT_READY_EVENT, {"reportId": report_id, "careers": careers})
+
+
 __all__ = [
+    "REPORT_READY_EVENT",
     "SUBAGENT_END_EVENT",
     "SUBAGENT_START_EVENT",
     "SUBAGENT_TOOL_NAME",
     "UNKNOWN_SUBAGENT",
     "SubagentEventsMiddleware",
+    "avisar_informe_listo",
 ]
