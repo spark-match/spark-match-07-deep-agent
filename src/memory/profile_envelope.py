@@ -7,8 +7,8 @@ Lo mete en un sobre con el nombre del esquema delante::
 
 Eso no se documenta en ningun sitio del codigo que lo consume, y cada lector
 del store llego a su manera a asumir que el valor **era** el perfil. Con
-Pydantic esa suposicion no falla ruidosamente, que es lo que la hizo cara:
-``StudentProfile`` tiene todos los campos opcionales, asi que
+Pydantic esa suposicion no falla ruidosamente, que es lo que la hizo cara: en
+``StudentProfile`` no hay un solo campo obligatorio, asi que
 ``model_validate`` sobre el sobre **valida sin quejarse** y devuelve un perfil
 con los dieciseis campos a ``None``. Ni excepcion, ni warning, ni traza. La
 puerta de D8 leia completitud 0.0 y ningun codigo RIASEC de un estudiante que

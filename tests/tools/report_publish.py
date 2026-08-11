@@ -180,8 +180,16 @@ class TestPuertaDeCompletitud:
         salida = await _emitir()
 
         assert salida["status"] == "error"
-        # El modelo tiene que leer que hacer, no un codigo nuestro.
-        assert "assessment" in salida["errors"][0]
+        # El modelo tiene que leer que hacer, no un codigo nuestro. Y lo que
+        # lea tiene que poder hacerlo: quien lee esto es el subagente de
+        # informes, con dos herramientas y sin forma de delegar ni de hablar
+        # con el estudiante. Antes le deciamos "delega en el subagente de
+        # assessment", y ante la instruccion imposible se invento una salida
+        # -- escribio el informe entero en su respuesta.
+        instruccion = salida["errors"][0]
+        assert "cuestionario" in instruccion
+        assert "coordinador" in instruccion
+        assert "assessment" not in instruccion
 
     async def test_un_perfil_corto_dice_que_preguntar(self, montaje, monkeypatch):
         async def rechazar(*_args, **_kwargs):

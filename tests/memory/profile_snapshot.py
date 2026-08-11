@@ -123,8 +123,8 @@ class TestElPerfilVieneEnUnSobre:
     """El fallo que dejaba sin informe a quien si tenia perfil.
 
     langmem no guarda el `StudentProfile` tal cual, lo envuelve en
-    `{"kind", "content"}`. Validar el sobre no lanza --todos los campos de
-    `StudentProfile` son opcionales-- sino que devuelve un perfil entero a
+    `{"kind", "content"}`. Validar el sobre no lanza --en `StudentProfile` no
+    hay un solo campo obligatorio-- sino que devuelve un perfil entero a
     `None`, asi que esta puerta contestaba `riasec_missing` y completitud 0.0
     a un estudiante con las seis puntuaciones guardadas. Sin excepcion, sin
     warning y sin traza: el unico sintoma era "no se pudo generar el reporte".

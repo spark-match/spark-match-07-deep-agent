@@ -61,7 +61,7 @@ async def leer_perfil_para_la_puerta(store: Any, user_id: str) -> PerfilParaLaPu
 
     # `perfil_de` y no `items[0].value` a secas: langmem guarda el perfil
     # dentro de un sobre `{"kind", "content"}`. Validar el sobre no falla --
-    # todos los campos de `StudentProfile` son opcionales -- sino que
+    # en `StudentProfile` no hay un solo campo obligatorio -- sino que
     # devuelve un perfil entero a `None`, y esta puerta respondia
     # `riasec_missing` a estudiantes con las seis puntuaciones guardadas.
     # Ver `src.memory.profile_envelope`.
