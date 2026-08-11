@@ -124,11 +124,43 @@ class AssessmentOnceMiddleware(AgentMiddleware):
     ``astream_events``, so the async hook is required, not optional.
     """
 
+    def _cuajo(self, messages: list[Any], call_id: str) -> bool:
+        """Si esa llamada llego a devolver un perfil, y no un error.
+
+        Sin respuesta tambien es ``False``: el turno se murio antes de que
+        llegara (asi acabo el del ``GraphRecursionError`` del 2026-08-11), y
+        una evaluacion que nadie recibio no es una evaluacion hecha.
+        """
+        for m in messages:
+            if not isinstance(m, ToolMessage) or m.tool_call_id != call_id:
+                continue
+            if getattr(m, "status", None) == "error":
+                return False
+            return not str(m.content).startswith("Error:")
+        return False
+
     def _find_repeat_response(self, request: ToolCallRequest) -> ToolMessage | None:
         """Return a refusal ``ToolMessage`` if this is a repeat assessment call.
 
         Returns ``None`` when the call should proceed (either it targets a
-        different tool, or no prior assessment call exists in history).
+        different tool, or no prior assessment call cuajo).
+
+        Dos cosas que este guard hacia mal y dejaban al estudiante sin
+        informe, medidas en dev el 2026-08-11:
+
+        1. **Se contaba a si mismo.** Cuando corre el wrapper, el
+           ``AIMessage`` con esta misma llamada YA esta en ``state``, asi que
+           la primera llamada de la conversacion se veia a si misma y salia
+           "prior calls=1". En la traza se ve entero: el modelo la emite a
+           las 04:18:29 y a las 04:18:32 se rechaza por repetida. Se excluye
+           por ``id``, que es lo unico que distingue una llamada de otra.
+        2. **Contaba intentos, no evaluaciones.** Una llamada que reventó, o
+           que se quedo sin respuesta porque el turno murio, bloqueaba el
+           reintento -- justo el que el texto del rechazo recomienda pedir.
+           Ahora solo cuentan las que cuajaron.
+
+        Lo que el guard existe para evitar sigue evitado: reevaluar un perfil
+        que ya esta hecho. Eso no cambia.
         """
         tool_call = request.tool_call
         if tool_call.get("name") != ASSESSMENT_TOOL_NAME:
@@ -136,20 +168,23 @@ class AssessmentOnceMiddleware(AgentMiddleware):
 
         state = request.state
         messages = state.get("messages", []) if state else []
-        prior_calls = sum(
-            1
+        id_actual = tool_call.get("id")
+        anteriores = [
+            tc.get("id")
             for m in messages
             for tc in getattr(m, "tool_calls", []) or []
-            if tc.get("name") == ASSESSMENT_TOOL_NAME
-        )
-        if prior_calls == 0:
+            if tc.get("name") == ASSESSMENT_TOOL_NAME and tc.get("id") != id_actual
+        ]
+        hechas = [cid for cid in anteriores if self._cuajo(messages, cid)]
+        if not hechas:
             return None
 
         session = _get_session_id()
         logger.warning(
-            "Refusing repeat %s call (prior calls=%d) for session=%s",
+            "Refusing repeat %s call (%d hechas, %d intentos) for session=%s",
             ASSESSMENT_TOOL_NAME,
-            prior_calls,
+            len(hechas),
+            len(anteriores),
             session,
         )
         return ToolMessage(
@@ -160,6 +195,7 @@ class AssessmentOnceMiddleware(AgentMiddleware):
                 "the assessment."
             ),
             tool_call_id=tool_call.get("id", ""),
+            status="error",
         )
 
     def wrap_tool_call(
