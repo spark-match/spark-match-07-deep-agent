@@ -54,24 +54,39 @@ def _error(mensaje: str) -> dict[str, Any]:
 #: Texto y no solo el codigo: lo que sigue a esto es una frase para un
 #: estudiante de secundaria, y dejar que el modelo improvise sobre
 #: "report.riasec_missing" es pedirle que traduzca jerga nuestra.
+#:
+#: Quien lee esto es el **subagente de informes**, y solo tiene dos
+#: herramientas: `recommend_programs` y esta. No puede delegar ni hablar con
+#: el estudiante. Antes le deciamos "delega en el subagente de assessment" y
+#: "preguntale un par de cosas mas", dos cosas que desde ahi no se pueden
+#: hacer; ante una instruccion imposible el modelo se invento una salida y
+#: escribio el informe entero en su respuesta (medido en dev el 2026-08-11:
+#: «El sistema me indica un error, pero segun los datos que me
+#: proporcionaste...»). Cada frase de aqui tiene que ser ejecutable con lo
+#: que ese subagente tiene en la mano, y eso es: parar y devolver.
 _EXPLICACION_DE_LA_PUERTA = {
     reports_client.CODIGO_SIN_RIASEC: (
-        "Todavia no se le puede emitir el informe porque no tiene codigo RIASEC. "
-        "Delega en el subagente de assessment o preguntale lo que falte para "
-        "completar las seis puntuaciones, y vuelve a intentarlo despues."
+        "Todavia no se le puede emitir el informe porque no tiene las seis "
+        "puntuaciones RIASEC guardadas. Que las hayas visto en el contexto no "
+        "significa que esten registradas, y lo que cuenta es lo registrado. Para "
+        "aqui: no lo reintentes y no escribas el informe. Devuelve al coordinador "
+        "que hace falta completar el cuestionario vocacional primero."
     ),
     reports_client.CODIGO_PERFIL_CORTO: (
-        "El perfil se queda corto para un informe que merezca la pena. Preguntale "
-        "un par de cosas mas sobre el (edad, nivel educativo, que le interesa) y "
-        "vuelve a intentarlo; no hace falta que diga sus preferencias de region "
-        "ni presupuesto, esas no cuentan."
+        "El perfil se queda corto para un informe que merezca la pena. Para aqui: "
+        "no lo reintentes y no escribas el informe. Devuelve al coordinador que "
+        "faltan datos basicos del estudiante (edad, nivel educativo, que le "
+        "interesa) y que los pregunte el; sus preferencias de region y presupuesto "
+        "no cuentan para esto."
     ),
     reports_client.CODIGO_YA_EN_CURSO: (
-        "Ya hay un informe generandose para este estudiante. No lo pidas otra vez: "
-        "dile que espere unos segundos a que termine el que hay en marcha."
+        "Ya hay un informe generandose para este estudiante. Para aqui: no lo "
+        "pidas otra vez ni escribas nada. Devuelve al coordinador que hay uno en "
+        "marcha y que espere unos segundos."
     ),
     reports_client.CODIGO_TOPE_DIARIO: (
-        "Ha llegado al tope de informes por dia. Dile cuando podra pedir otro."
+        "Ha llegado al tope de informes por dia. Para aqui: no lo reintentes y no "
+        "escribas el informe. Devuelve al coordinador cuando podra pedir otro."
     ),
 }
 
