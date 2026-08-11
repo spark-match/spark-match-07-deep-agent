@@ -169,3 +169,64 @@ class TestNuncaTumbaElTurno:
 
         assert await guardar_riasec_medido(store, "u-1", incompletas, CODIGO) is False
         assert store.escrituras == []
+
+
+class TestLoMedidoEntraDentroDelSobre:
+    """Las puntuaciones van donde vive el perfil, no al lado.
+
+    langmem guarda el perfil dentro de `content`. Fusionar en la raiz --que es
+    lo que se hacia-- dejaba las seis puntuaciones fuera del perfil de verdad:
+    la completitud de D8 se calcula sobre el contenido, asi que el estudiante
+    se quedaba clavado en 0.50 por debajo del 0.60 que se le pide, y el
+    extractor de langmem tampoco las veia al actualizar.
+    """
+
+    def _sobre(self, contenido):
+        return {"kind": "StudentProfile", "content": contenido}
+
+    async def test_las_seis_puntuaciones_acaban_en_content(self):
+        store = StoreFalso(self._sobre({"age": 22}))
+
+        assert await guardar_riasec_medido(store, "u-1", SCORES, CODIGO) is True
+
+        _, _, escrito = store.escrituras[0]
+        assert escrito["content"]["realistic"] == 9
+        assert escrito["content"]["riasec_code"] == CODIGO
+
+    async def test_no_queda_nada_suelto_en_la_raiz(self):
+        store = StoreFalso(self._sobre({"age": 22}))
+
+        await guardar_riasec_medido(store, "u-1", SCORES, CODIGO)
+
+        _, _, escrito = store.escrituras[0]
+        assert set(escrito) == {"kind", "content"}
+
+    async def test_lo_que_ya_habia_en_el_perfil_sigue_ahi(self):
+        store = StoreFalso(self._sobre({"age": 22, "name": "Ana"}))
+
+        await guardar_riasec_medido(store, "u-1", SCORES, CODIGO)
+
+        _, _, escrito = store.escrituras[0]
+        assert escrito["content"]["name"] == "Ana"
+        assert escrito["content"]["age"] == 22
+
+    async def test_lo_escrito_lo_lee_la_puerta(self):
+        """La prueba que importa: de punta a punta con el modelo real."""
+        store = StoreFalso(self._sobre({"name": "Ana", "age": 17}))
+
+        await guardar_riasec_medido(store, "u-1", SCORES, CODIGO)
+
+        _, _, escrito = store.escrituras[0]
+        perfil = StudentProfile.model_validate(escrito["content"])
+        assert perfil.has_riasec_profile is True
+        assert perfil.profile_completeness >= 0.6
+
+    async def test_sin_perfil_previo_se_escribe_suelto(self):
+        # No hay sobre que conservar todavia; el extractor lo envolvera cuando
+        # pase por primera vez.
+        store = StoreFalso()
+
+        await guardar_riasec_medido(store, "u-1", SCORES, CODIGO)
+
+        _, _, escrito = store.escrituras[0]
+        assert escrito["riasec_code"] == CODIGO
