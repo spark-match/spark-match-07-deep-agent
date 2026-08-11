@@ -142,6 +142,54 @@ class ProfileHydrationMiddleware(AgentMiddleware):
         return _render_if_present(items)
 
 
+def _avisar_si_la_extraccion_falla(futuro: Any, user_id: str) -> None:
+    """Cuelga del future un log para cuando la extraccion se caiga.
+
+    ``ReflectionExecutor.submit`` devuelve un ``Future`` y guarda ahi dentro
+    la excepcion si el trabajo revienta (``task.future.set_exception``). Nadie
+    llama nunca a ``.result()``, asi que hasta ahora esa excepcion se moria
+    donde nacia: la extraccion de perfil podia estar fallando en cada uno de los
+    turnos y el servicio se veia perfectamente sano.
+
+    No es teoria. Asi se paso desapercibido que el extractor volvia troceado
+    por ``max_tokens`` (ver :func:`src.memory.profile_manager
+    ._modelo_de_extraccion`): el sintoma que llego fue "no me deja generar el
+    informe", a cuatro capas de distancia de la causa, y hubo que sacarlo de
+    las trazas de LangSmith porque en el log del servicio no habia ni una
+    linea. Con esto, la proxima vez lo dice el propio servicio.
+
+    Solo observa: no reintenta ni propaga. El turno del estudiante ya termino
+    y su perfil se completara en el siguiente -- convertir esto en un error
+    visible para el seria cambiar un fallo silencioso por uno ruidoso e
+    igual de inutil para quien esta conversando.
+    """
+    if not hasattr(futuro, "add_done_callback"):  # pragma: no cover - executor ajeno
+        return
+
+    def _mirar(f: Any) -> None:
+        # `cancelled()` primero, y no un `try/except` alrededor de
+        # `exception()`: en un future cancelado, `exception()` lanza
+        # `CancelledError`, y de que hereda esa clase depende de la version.
+        # En 3.8 se alias a la de `asyncio`, que cuelga de `BaseException`;
+        # en la 3.14 que corremos vuelve a ser una clase propia bajo
+        # `Exception` (comprobado, no supuesto). Preguntar por el estado no
+        # depende de eso: si algun dia el arbol vuelve a moverse, la
+        # excepcion no se escapa por el callback hacia quien llamo a
+        # `cancel()` -- que es el `shutdown(cancel_futures=True)` del apagado.
+        if f.cancelled():
+            return
+        fallo = f.exception()
+        if fallo is not None:
+            logger.error(
+                "La extraccion de perfil fallo para user_id=%r; su completitud se "
+                "queda como estaba y la puerta del informe puede rechazarle",
+                user_id,
+                exc_info=fallo,
+            )
+
+    futuro.add_done_callback(_mirar)
+
+
 class ProfilePersistMiddleware(AgentMiddleware):
     """Encodes the turn into the background ``StudentProfile`` extraction.
 
@@ -184,11 +232,12 @@ class ProfilePersistMiddleware(AgentMiddleware):
             return
         user_id = get_user_id(runtime)
         settings = get_settings()
-        self._executor.submit(
+        futuro = self._executor.submit(
             {"messages": redact_messages(state.get("messages", []))},
             config={"configurable": {"user_id": user_id}},
             after_seconds=settings.reflection_delay_seconds,
         )
+        _avisar_si_la_extraccion_falla(futuro, user_id)
 
 
 class MemorySeedMiddleware(AgentMiddleware):

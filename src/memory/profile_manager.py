@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from langchain.chat_models import init_chat_model
 from langmem import ReflectionExecutor, create_memory_store_manager
 
 from src.config import get_settings
@@ -84,6 +85,41 @@ So, for these four fields only:
 """
 
 
+def _modelo_de_extraccion(model: str | BaseChatModel | None) -> str | BaseChatModel:
+    """El modelo del extractor, ya con su techo de salida puesto.
+
+    Existe por un fallo que costo encontrar porque no dejaba rastro. langmem
+    resuelve un modelo en texto con ``init_chat_model(model)`` a secas
+    (``langmem/knowledge/extraction.py``), sin ``max_tokens``, asi que
+    ``ChatBedrock`` aplicaba su default de proveedor: **1024 tokens de
+    salida**. Con una conversacion de verdad detras -- 53k tokens de entrada
+    en el caso que lo destapo -- la llamada a ``PatchDoc`` no cabia y volvia
+    con ``stop_reason=max_tokens``, o sea troceada. Una tool call troceada no
+    es un perfil a medias: no es nada. Y como la extraccion va en un future
+    que nadie mira, no se enteraba ni el log.
+
+    La consecuencia no era perder un campo suelto. ``name``, ``age``,
+    ``education_level`` e ``interests`` solo se rellenan por aqui, y sin
+    ellos ``profile_completeness`` se queda clavado en 6/12 = 0.50, por
+    debajo del 0.60 que pide la puerta de D8. El agente pedia al estudiante
+    justo los datos que el sistema era incapaz de guardar, y volvia a
+    pedirlos despues. El informe no se podia emitir nunca.
+
+    Se reutiliza ``settings.max_tokens`` en vez de estrenar un ajuste propio:
+    es el mismo techo que ``src.agent.factory._resolve_model`` ya le pone a
+    los dos modelos del agente, y el problema aqui no era afinar un numero
+    sino que no hubiera ninguno. Un ``BaseChatModel`` ya construido (los
+    falsos de los tests) pasa intacto, igual que alli.
+    """
+    if model is not None and not isinstance(model, str):
+        return model
+    settings = get_settings()
+    return init_chat_model(
+        model if model is not None else settings.fast_model_string,
+        max_tokens=settings.max_tokens,
+    )
+
+
 def build_profile_manager(store: BaseStore, model: str | BaseChatModel | None = None) -> object:
     """Create a langmem store manager configured for StudentProfile extraction.
 
@@ -98,19 +134,20 @@ def build_profile_manager(store: BaseStore, model: str | BaseChatModel | None = 
             production; any ``BaseStore`` (e.g. ``InMemoryStore``) works in
             tests.
         model: Chat model to use for extraction. Defaults to
-            ``settings.fast_model_string`` (Haiku) when omitted. Accepting an
-            already-constructed ``BaseChatModel`` lets tests inject a fake
-            (e.g. ``GenericFakeChatModel``) instead of resolving a real
-            ``ChatBedrock`` through ``init_chat_model`` — that resolution
-            happens eagerly inside ``create_memory_store_manager.__init__``
-            and requires an AWS region/credentials even if the model is
-            never actually invoked, which would otherwise break the
-            no-AWS-required guarantee (hard rule #7) in CI.
+            ``settings.fast_model_string`` (Haiku) when omitted. Un texto se
+            resuelve en :func:`_modelo_de_extraccion`, que es quien le pone
+            el ``max_tokens`` — leer alli por que sin el no se emitia ningun
+            informe. Accepting an already-constructed ``BaseChatModel`` lets
+            tests inject a fake (e.g. ``GenericFakeChatModel``) instead of
+            resolving a real ``ChatBedrock`` through ``init_chat_model`` —
+            that resolution is eager (antes dentro de
+            ``create_memory_store_manager.__init__``, ahora un paso antes,
+            en el mismo momento) and requires an AWS region/credentials even
+            if the model is never actually invoked, which would otherwise
+            break the no-AWS-required guarantee (hard rule #7) in CI.
     """
-    settings = get_settings()
-
     return create_memory_store_manager(
-        model if model is not None else settings.fast_model_string,
+        _modelo_de_extraccion(model),
         schemas=[StudentProfile],
         instructions=EXTRACTION_INSTRUCTIONS,
         namespace=PROFILE_NAMESPACE,
