@@ -736,3 +736,71 @@ class TestProfileDoesNotPolluteTheMessageList:
         assert messages, "the turn produced no persisted messages"
         assert not any(m.type == "system" for m in messages)
         assert not any("Perfil vocacional" in str(m.content) for m in messages)
+
+
+class TestElArranqueDiceSiPuedeEmitirInformes:
+    """El aviso de `comprobar_el_render_de_pdf` (ADR-019, D11).
+
+    Sin esto, una imagen a la que le falten pango/cairo arranca sana, pasa el
+    health check y conversa con normalidad; lo unico que no puede hacer es
+    emitir un informe, y eso no se descubre hasta que un estudiante pide el
+    suyo. Y como `upload_report` renderiza antes de subir nada, ese estudiante
+    no se queda sin PDF: se queda sin informe.
+
+    El caso malo se prueba forzandolo, porque el runner de CI SI tiene las
+    bibliotecas -- por eso los tests de `tests/reports/pdf.py` no se saltan
+    alli -- y sin forzarlo esta rama no se ejercitaria nunca en el unico sitio
+    donde importa que este probada.
+    """
+
+    @pytest.fixture
+    def sin_render_de_pdf(self, monkeypatch):
+        """Una imagen a la que le faltan las bibliotecas nativas."""
+        from src.api import app as app_module
+
+        monkeypatch.setattr(app_module, "pdf_rendering_available", lambda: False)
+
+    def test_lo_avisa_en_error_cuando_no_se_puede_renderizar(self, monkeypatch, caplog):
+        import logging as _logging
+
+        from src.api import app as app_module
+
+        monkeypatch.setattr(app_module, "pdf_rendering_available", lambda: False)
+
+        with caplog.at_level(_logging.INFO, logger=app_module.__name__):
+            disponible = app_module.comprobar_el_render_de_pdf()
+
+        assert disponible is False
+        errores = [r for r in caplog.records if r.levelno == _logging.ERROR]
+        assert len(errores) == 1
+        # El mensaje tiene que decir QUE instalar y DONDE: quien se lo
+        # encuentra esta mirando logs de ECS, sin este codigo delante.
+        mensaje = errores[0].getMessage()
+        assert "libpango-1.0-0" in mensaje
+        assert "Dockerfile" in mensaje
+
+    def test_no_gasta_un_error_cuando_si_se_puede(self, monkeypatch, caplog):
+        import logging as _logging
+
+        from src.api import app as app_module
+
+        monkeypatch.setattr(app_module, "pdf_rendering_available", lambda: True)
+
+        with caplog.at_level(_logging.INFO, logger=app_module.__name__):
+            disponible = app_module.comprobar_el_render_de_pdf()
+
+        assert disponible is True
+        assert not [r for r in caplog.records if r.levelno >= _logging.ERROR]
+
+    def test_una_imagen_sin_las_bibliotecas_arranca_igual(self, sin_render_de_pdf, client):
+        """La comprobacion avisa, no tumba el arranque.
+
+        `sin_render_de_pdf` va ANTES que `client` en la firma a proposito:
+        pytest instancia las fixtures del mismo scope en ese orden, y el
+        lifespan -- donde vive la llamada -- corre al construirse `client`.
+        Al reves, el parche llegaria tarde y el test no probaria nada.
+
+        Que el health check responda con el render caido es lo que separa
+        "se pierde una funcion" de "se cae el producto".
+        """
+        assert client.get("/health").status_code == 200
