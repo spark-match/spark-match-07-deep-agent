@@ -35,6 +35,7 @@ import logging
 import time
 from typing import Any
 
+from src.agent.subagent_carryover import anotar
 from src.agent.subagent_events import avisar_informe_listo
 from src.backend import reports_client
 from src.backend.reports_client import BackendNoConfigurado, ErrorDelBackend
@@ -42,6 +43,7 @@ from src.config import get_settings
 from src.memory.profile_snapshot import leer_perfil_para_la_puerta
 from src.models.report import OrientationReport
 from src.reports.storage import InformeGuardado, upload_report
+from src.threads.activity import INFORME
 from src.tools.report.handler import build_orientation_report_handler
 
 logger = logging.getLogger(__name__)
@@ -255,6 +257,12 @@ async def publish_orientation_report_handler(
     # el backend no la cierra, el informe no se puede abrir todavia, y un
     # boton que lleva a una pantalla vacia es peor que no tener boton.
     await avisar_informe_listo(report_id, [carrera.career for carrera in informe.careers])
+
+    # Y ademas se deja escrito para el padre. El aviso de arriba solo existe
+    # mientras el turno corre: al recargar la pagina el enlace desaparecia,
+    # porque esto pasa dentro del subagente de report y de ahi no vuelve mas
+    # que el texto final. Ver `src/agent/subagent_carryover.py`.
+    anotar(INFORME, report_id)
 
     return {
         "status": "success",

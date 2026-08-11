@@ -25,7 +25,9 @@ from src.agent.memory_middleware import (
 )
 from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.pii import PIIRedactionMiddleware
+from src.agent.report_gate import ReportGateMiddleware
 from src.agent.router_middleware import IntentRouterMiddleware
+from src.agent.subagent_carryover import SubagentCarryoverMiddleware, SubagentStepsMiddleware
 from src.agent.subagent_events import SubagentEventsMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
@@ -206,6 +208,26 @@ def create_spark_agent(
       non-goal note (``/memories/AGENTS.md`` writes via deepagents' own
       filesystem tools are not covered).
 
+    La puerta del informe, adelantada:
+    - ``ReportGateMiddleware`` comprueba antes de delegar en el subagente de
+      report lo que el backend iba a comprobar al final: RIASEC, completitud,
+      tope diario y generacion en curso. Sin eso, un estudiante en su tope de
+      tres al dia se enteraba despues de que el subagente escribiera el informe
+      entero -- 44,9 s medidos en dev el 2026-08-11. Falla abierto a proposito:
+      ver ``src/agent/report_gate.py``.
+
+    Lo que se produce dentro de un subagente:
+    - ``SubagentCarryoverMiddleware`` abre un buzon alrededor de cada
+      delegacion y vuelca lo que se escriba en el sobre el ``ToolMessage`` que
+      si se persiste. Lleva dos cosas, y las dos se perdian al recargar porque
+      de un subagente no vuelve mas que su texto final: el **id del informe**
+      emitido (el enlace desaparecia aunque el informe siguiera ahi) y los
+      **pasos** que dio por dentro (el chip decia "1 paso" donde en vivo se
+      habian visto ocho).
+    - ``SubagentStepsMiddleware`` es quien los recoge, y va cableado en cada
+      subagente y no aqui: la lista de abajo no baja a ellos. Ver
+      ``src/agent/subagent_carryover.py``.
+
     Visibilidad de la delegacion:
     - ``SubagentEventsMiddleware`` emite un par de eventos custom alrededor
       de cada llamada a la herramienta ``task``, que es como deepagents
@@ -264,12 +286,24 @@ def create_spark_agent(
     # 2026-08-09: planning_query_cs revento con tool_use huerfano dentro del
     # subagente de planning, con la defensa cableada un nivel por encima.
     #
+    # `SubagentStepsMiddleware` va aqui por lo MISMO y no por casualidad: es la
+    # unica forma de ver lo que un subagente hace por dentro. Sin el, al
+    # recargar la pagina el chip decia "1 paso" donde en vivo se habian visto
+    # ocho -- los siete de dentro nunca llegaron al checkpoint del padre.
+    #
     # Instancia nueva por subagente a proposito: compartir una sola entre
     # grafos distintos es pedir que un estado se filtre entre ellos.
     subagents: Sequence[SubAgent] = cast(
         "Sequence[SubAgent]",
         [
-            {**spec, "middleware": [*spec.get("middleware", []), ToolCallRepairMiddleware()]}
+            {
+                **spec,
+                "middleware": [
+                    *spec.get("middleware", []),
+                    SubagentStepsMiddleware(),
+                    ToolCallRepairMiddleware(),
+                ],
+            }
             for spec in (
                 ASSESSMENT_SUBAGENT,
                 MATCHING_SUBAGENT,
@@ -301,12 +335,24 @@ def create_spark_agent(
     # are opt-in on store being present.
     memory_sources = ["/memories/AGENTS.md"] if store is not None else None
     middleware: list[Any] = [
-        # Primero de la lista, o sea el mas externo de los que envuelven
-        # llamadas a herramientas: asi la duracion que reporta es la que el
-        # estudiante espera de verdad, con la redaccion de PII y el guard de
-        # assessment ya incluidos dentro. No tiene hooks de modelo, asi que
-        # ponerlo aqui no altera el orden de Guardrails -> ContentFilter.
+        # Por delante de los eventos, o sea el mas externo de todos. Un rechazo
+        # de la puerta no debe emitir el par `spark.subagent.*`: anunciaria un
+        # especialista que nunca llego a arrancar, y el estudiante veria
+        # aparecer y desaparecer un indicador de trabajo inexistente. De paso,
+        # la duracion que reporta el middleware de abajo sigue siendo la del
+        # subagente y no incluye esta consulta.
+        ReportGateMiddleware(),
+        # Primero de los que envuelven llamadas a herramientas de verdad: asi
+        # la duracion que reporta es la que el estudiante espera, con la
+        # redaccion de PII y el guard de assessment ya incluidos dentro. No
+        # tiene hooks de modelo, asi que ponerlo aqui no altera el orden de
+        # Guardrails -> ContentFilter.
         SubagentEventsMiddleware(),
+        # Justo por dentro de los eventos: el buzon tiene que estar abierto
+        # mientras el subagente corre, y cerrarse antes de que nadie mire el
+        # resultado. Aparte de `SubagentEventsMiddleware` porque aquel solo
+        # observa y esto cambia lo que se persiste.
+        SubagentCarryoverMiddleware(),
         GuardrailsMiddleware(),
         ContentFilterMiddleware(classifier_model=fast_model_resolved),
     ]

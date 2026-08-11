@@ -20,6 +20,7 @@ from src.backend.reports_client import (
     complete_report,
     fail_report,
     open_report,
+    report_eligibility,
 )
 from src.config import get_settings
 
@@ -113,6 +114,80 @@ class TestOpenReport:
         await open_report(TOKEN, profile_completeness=0.2, riasec_code=None)
 
         assert json.loads(vistas[0].content)["riasecCode"] is None
+
+
+class TestReportEligibility:
+    """La lectura que permite no delegar cuando la puerta ya diria que no."""
+
+    ELEGIBLE = {
+        "limit": 3,
+        "used": 1,
+        "remaining": 2,
+        "retryAfter": None,
+        "generating": False,
+        "minProfileCompleteness": 0.6,
+    }
+
+    async def test_devuelve_solo_el_bloque_de_elegibilidad(self, monkeypatch):
+        _instalar(monkeypatch, lambda _: _ok({"reports": [], "eligibility": self.ELEGIBLE}))
+
+        salida = await report_eligibility(TOKEN)
+
+        assert salida == self.ELEGIBLE
+
+    async def test_pide_un_solo_informe_del_historico(self, monkeypatch):
+        # De la respuesta solo interesa la elegibilidad; el historico entero son
+        # decenas de KB que nadie va a mirar.
+        vistas = _instalar(
+            monkeypatch, lambda _: _ok({"reports": [], "eligibility": self.ELEGIBLE})
+        )
+
+        await report_eligibility(TOKEN)
+
+        assert str(vistas[0].url) == f"{BASE}/v1/reports?limit=1"
+        assert vistas[0].method == "GET"
+
+    async def test_va_con_el_jwt_del_estudiante(self, monkeypatch):
+        vistas = _instalar(
+            monkeypatch, lambda _: _ok({"reports": [], "eligibility": self.ELEGIBLE})
+        )
+
+        await report_eligibility(TOKEN)
+
+        assert vistas[0].headers["authorization"] == f"Bearer {TOKEN}"
+
+    async def test_una_lectura_no_manda_cuerpo_ni_content_type(self, monkeypatch):
+        # Una cabecera que dice `application/json` sobre una peticion sin cuerpo
+        # miente, y de esas se acaba fiando alguien.
+        vistas = _instalar(
+            monkeypatch, lambda _: _ok({"reports": [], "eligibility": self.ELEGIBLE})
+        )
+
+        await report_eligibility(TOKEN)
+
+        assert vistas[0].content == b""
+        assert "content-type" not in vistas[0].headers
+
+    async def test_un_backend_sin_el_bloque_no_se_inventa_un_veredicto(self, monkeypatch):
+        # Pasa de verdad mientras el agente va por delante del backend en un
+        # despliegue. Quien llama lo trata como "no lo se" y delega igual.
+        _instalar(monkeypatch, lambda _: _ok({"reports": []}))
+
+        salida = await report_eligibility(TOKEN)
+
+        assert isinstance(salida, ErrorDelBackend)
+        assert salida.code == "backend.sin_elegibilidad"
+
+    async def test_el_backend_caido_sale_como_error_y_no_como_excepcion(self, monkeypatch):
+        def caer(_request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no hay ruta al host")
+
+        _instalar(monkeypatch, caer)
+
+        salida = await report_eligibility(TOKEN)
+
+        assert isinstance(salida, ErrorDelBackend)
+        assert salida.status == 503
 
 
 class TestTraduccionDeErrores:
