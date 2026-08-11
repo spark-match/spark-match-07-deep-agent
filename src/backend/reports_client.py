@@ -99,20 +99,24 @@ def _traducir_error(respuesta: httpx.Response) -> ErrorDelBackend:
 
 
 async def _llamar(
-    token: str, metodo: str, ruta: str, cuerpo: dict[str, Any]
+    token: str, metodo: str, ruta: str, cuerpo: dict[str, Any] | None = None
 ) -> dict[str, Any] | ErrorDelBackend:
-    """Una peticion autenticada, con el error ya traducido."""
+    """Una peticion autenticada, con el error ya traducido.
+
+    ``cuerpo`` es opcional porque las lecturas no llevan ninguno. Mandar
+    ``Content-Type: application/json`` en un GET sin cuerpo no rompe nada hoy,
+    pero es una cabecera que miente sobre lo que se envia, y de esas se acaba
+    fiando alguien.
+    """
     ajustes = get_settings()
     url = f"{_base_url()}{ruta}"
+    cabeceras = {"Authorization": f"Bearer {token}"}
+    if cuerpo is not None:
+        cabeceras["Content-Type"] = "application/json"
 
     try:
         async with httpx.AsyncClient(timeout=ajustes.backend_timeout_seconds) as cliente:
-            respuesta = await cliente.request(
-                metodo,
-                url,
-                json=cuerpo,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            )
+            respuesta = await cliente.request(metodo, url, json=cuerpo, headers=cabeceras)
     except httpx.HTTPError as exc:
         # Una red caida no es un error de negocio, pero quien llama tiene que
         # poder distinguirlo igual: un 503 sintetico le dice "reintenta o
@@ -147,6 +151,39 @@ async def open_report(
     )
 
 
+async def report_eligibility(token: str) -> dict[str, Any] | ErrorDelBackend:
+    """`GET /v1/reports`. Si el estudiante puede pedir otro informe ahora mismo.
+
+    Es la MISMA puerta de `open_report`, leida antes de trabajar. Existe porque
+    la de verdad se abre al final: `open_report` es la ultima llamada de la
+    generacion, asi que un estudiante en su tope se enteraba despues de que el
+    subagente escribiera el informe entero -- 44,9 s medidos en dev el
+    2026-08-11. Lo que se lee aqui **no autoriza nada**: entre esta lectura y
+    la escritura cabe otro informe, y por eso `open_report` sigue decidiendo.
+
+    ``limit=1`` porque de la respuesta solo interesa el bloque de elegibilidad;
+    el historico entero son decenas de KB que nadie va a mirar. Cero no vale:
+    el repositorio lo sube a su minimo.
+
+    Un backend anterior a esto contesta sin el bloque, y entonces esto devuelve
+    un error en vez de inventarse un veredicto. Quien llama lo trata como "no
+    lo se" y delega igual, que es exactamente el comportamiento de antes.
+    """
+    respuesta = await _llamar(token, "GET", "/v1/reports?limit=1")
+    if isinstance(respuesta, ErrorDelBackend):
+        return respuesta
+
+    elegibilidad = respuesta.get("eligibility")
+    if not isinstance(elegibilidad, dict):
+        return ErrorDelBackend(
+            502,
+            "backend.sin_elegibilidad",
+            "El backend listo los informes pero no dijo si cabe otro.",
+            {},
+        )
+    return elegibilidad
+
+
 async def complete_report(
     token: str, report_id: str, resultado: dict[str, Any]
 ) -> dict[str, Any] | ErrorDelBackend:
@@ -175,4 +212,5 @@ __all__ = [
     "complete_report",
     "fail_report",
     "open_report",
+    "report_eligibility",
 ]

@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 
+from src.threads.activity import CLAVE, INFORME, PASOS
 from src.threads.history import _ASUNTO_POR_HERRAMIENTA, load_thread_messages
 
 
@@ -369,6 +370,256 @@ class TestActividadRehidratada:
         respuesta = next(m for m in messages if m["content"].startswith("Encontré"))
         assert "activity" not in preambulo
         assert len(respuesta["activity"]) == 1
+
+
+class TestElInformeEmitido:
+    """El enlace al informe tiene que seguir ahi al recargar.
+
+    El id no esta en ningun mensaje del hilo: `publish_orientation_report`
+    corre dentro del subagente de report y de ahi no vuelve mas que el texto
+    final. Se lo cuelga `SubagentCarryoverMiddleware` al `ToolMessage` de la
+    delegacion, y esto comprueba que de ahi sale al historial.
+    """
+
+    @staticmethod
+    def _delegacion_con_informe(report_id: str) -> ToolMessage:
+        return ToolMessage(
+            content="informe emitido",
+            tool_call_id="tc1",
+            additional_kwargs={CLAVE: {INFORME: report_id}},
+        )
+
+    async def test_sale_en_el_mensaje_que_cierra_el_turno(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="genérame mi reporte"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="report", description="x")],
+                ),
+                self._delegacion_con_informe("r-9"),
+                AIMessage(content="ya lo tienes"),
+            ],
+        )
+
+        pregunta, respuesta = await load_thread_messages(graph, "t_1")
+
+        assert "report_id" not in pregunta
+        assert respuesta["report_id"] == "r-9"
+
+    async def test_no_se_pega_al_preambulo(self, graph):
+        # Ese «dame un momento» va ANTES de la delegacion, asi que el enlace
+        # quedaria por encima de la frase que anuncia que el informe esta listo.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="genérame mi reporte"),
+                AIMessage(
+                    content="dame un momento",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="report", description="x")],
+                ),
+                self._delegacion_con_informe("r-9"),
+                AIMessage(content="ya lo tienes"),
+            ],
+        )
+
+        preambulo, respuesta = (await load_thread_messages(graph, "t_1"))[1:]
+
+        assert "report_id" not in preambulo
+        assert respuesta["report_id"] == "r-9"
+
+    async def test_un_turno_sin_informe_no_lleva_la_clave(self, graph):
+        # El frontend pregunta por `msg.reportId`; una cadena vacia pintaria un
+        # boton hacia ninguna parte.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="qué carreras hay"),
+                AIMessage(content="", tool_calls=[_llamada("tc1", "search_careers", query="ing")]),
+                ToolMessage(content="[...]", tool_call_id="tc1"),
+                AIMessage(content="estas"),
+            ],
+        )
+
+        assert all("report_id" not in m for m in await load_thread_messages(graph, "t_1"))
+
+    async def test_el_informe_de_un_turno_no_se_cuela_en_el_siguiente(self, graph):
+        # El buzon se vacia al empezar cada turno, igual que los chips. Sin eso
+        # el boton reaparecia en respuestas que no habian emitido nada.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="genérame mi reporte"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="report", description="x")],
+                ),
+                self._delegacion_con_informe("r-9"),
+                AIMessage(content="ya lo tienes"),
+                HumanMessage(content="gracias"),
+                AIMessage(content="a ti"),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        assert messages[1]["report_id"] == "r-9"
+        assert "report_id" not in messages[3]
+
+    async def test_un_mensaje_de_antes_de_esto_no_revienta(self, graph):
+        # El checkpointer guarda hilos escritos por builds anteriores, sin
+        # `additional_kwargs` nuestro. Rehidratarlos tiene que seguir yendo.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="genérame mi reporte"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="report", description="x")],
+                ),
+                ToolMessage(content="informe emitido", tool_call_id="tc1"),
+                AIMessage(content="ya lo tienes"),
+            ],
+        )
+
+        messages = await load_thread_messages(graph, "t_1")
+
+        assert "report_id" not in messages[1]
+        assert messages[1]["activity"][0]["subagent"] == "report"
+
+
+class TestLosPasosDelSubagente:
+    """En vivo el chip decia 8 pasos; al recargar, 1.
+
+    Los siete de dentro ocurren en el grafo del subagente y no llegan al
+    checkpoint del padre. Ahora viajan pegados al `ToolMessage` de la
+    delegacion, y esto comprueba que salen como hermanos suyos -- que es como
+    el estudiante los vio la primera vez.
+    """
+
+    @staticmethod
+    def _delegacion_con_pasos(*pasos: dict) -> ToolMessage:
+        return ToolMessage(
+            content="listo",
+            tool_call_id="tc1",
+            additional_kwargs={CLAVE: {PASOS: list(pasos)}},
+        )
+
+    @staticmethod
+    def _paso(tool: str, id_: str, **extra) -> dict:
+        return {"id": id_, "tool": tool, "ok": True, **extra}
+
+    async def test_los_pasos_salen_detras_de_su_delegacion(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="qué carreras me convienen"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="matching", description="x")],
+                ),
+                self._delegacion_con_pasos(
+                    self._paso("recommend_programs", "in1", subject="IRC"),
+                    self._paso("search_careers", "in2", subject="ingeniería"),
+                ),
+                AIMessage(content="estas"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert [a.get("subagent") or a["tool"] for a in actividad] == [
+            "matching",
+            "recommend_programs",
+            "search_careers",
+        ]
+
+    async def test_la_clave_interna_no_sale_hacia_el_navegador(self, graph):
+        # `steps` es como viajan por dentro; hacia fuera son chips hermanos.
+        # Dejarla puesta le daria al frontend dos formas de leer lo mismo.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="matching", description="x")],
+                ),
+                self._delegacion_con_pasos(self._paso("search_careers", "in1")),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert all("steps" not in a for a in actividad)
+
+    async def test_cada_delegacion_se_lleva_los_suyos(self, graph):
+        # Con dos especialistas en el mismo turno, los pasos de uno detras de
+        # una lista plana quedarian colgando del otro.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        _llamada("tc1", "task", subagent_type="matching", description="x"),
+                        _llamada("tc2", "task", subagent_type="planning", description="x"),
+                    ],
+                ),
+                ToolMessage(
+                    content="listo",
+                    tool_call_id="tc1",
+                    additional_kwargs={CLAVE: {PASOS: [self._paso("search_careers", "in1")]}},
+                ),
+                ToolMessage(
+                    content="listo",
+                    tool_call_id="tc2",
+                    additional_kwargs={CLAVE: {PASOS: [self._paso("web_search", "in2")]}},
+                ),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert [a.get("subagent") or a["tool"] for a in actividad] == [
+            "matching",
+            "search_careers",
+            "planning",
+            "web_search",
+        ]
+
+    async def test_una_delegacion_sin_pasos_sale_como_antes(self, graph):
+        # Los hilos que ya estaban guardados no llevan nada nuestro.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="matching", description="x")],
+                ),
+                ToolMessage(content="listo", tool_call_id="tc1"),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert len(actividad) == 1
+        assert actividad[0]["subagent"] == "matching"
 
 
 class TestTurnosCortados:
