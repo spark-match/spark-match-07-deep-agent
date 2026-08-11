@@ -804,3 +804,61 @@ class TestElArranqueDiceSiPuedeEmitirInformes:
         "se pierde una funcion" de "se cae el producto".
         """
         assert client.get("/health").status_code == 200
+
+
+class TestElTurnoTieneMargenParaTerminar:
+    """`recursion_limit` en el config del turno (medido en dev, 2026-08-11).
+
+    `MaxTurnsMiddleware` existe para cortar limpio cuando el agente se va de
+    vueltas: emite un mensaje al estudiante y termina el turno. Nunca llegaba
+    a dispararse. `middleware.py` documentaba que "we set a high value to let
+    our guard fire first" y no lo hacia nadie, asi que LangGraph usaba su
+    default de 25 -- la MITAD de `max_turns=50`.
+
+    El resultado no era un corte limpio sino `GraphRecursionError` a mitad del
+    stream, que deja la respuesta cortada a media palabra en la pantalla del
+    estudiante. Le paso a un turno real que intentaba emitir un informe.
+    """
+
+    def test_el_tope_del_grafo_deja_llegar_al_guard(self):
+        """El invariante que estaba roto: 25 < 50.
+
+        Sin margen, subir `max_turns` vuelve a dejar el guard inalcanzable sin
+        que nada falle, que es como se cronifico la primera vez.
+        """
+        from src.config import get_settings
+
+        settings = get_settings()
+        assert settings.graph_recursion_limit > settings.max_turns
+
+    def test_va_en_la_raiz_del_config_y_no_en_configurable(self, client, monkeypatch):
+        """Dentro de `configurable`, LangGraph la ignora EN SILENCIO.
+
+        Es el fallo mas facil de reintroducir: el diccionario de al lado es
+        `configurable`, poner la clave ahi parece lo natural, y no falla nada
+        -- simplemente se vuelve al default de 25 y las respuestas se cortan
+        otra vez.
+        """
+        from src.config import get_settings
+
+        capturado = {}
+        agent = client.app.state.langgraph_agent
+        clone_real = agent.clone
+
+        def clone_espia():
+            copia = clone_real()
+            capturado["agente"] = copia
+            return copia
+
+        monkeypatch.setattr(agent, "clone", clone_espia)
+
+        respuesta = client.post(
+            "/ag-ui",
+            json=_ag_ui_body(thread_id="hilo-con-margen"),
+            headers={"Authorization": f"Bearer {_make_token()}"},
+        )
+        assert respuesta.status_code == 200
+
+        config = capturado["agente"].config
+        assert config["recursion_limit"] == get_settings().graph_recursion_limit
+        assert "recursion_limit" not in config["configurable"]

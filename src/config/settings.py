@@ -112,6 +112,25 @@ class Settings(BaseSettings):
     # --- Agent Configuration ---
     agent_name: str = "spark-match-advisor"
     max_turns: int = 50
+
+    # Tope de super-pasos del grafo. TIENE que quedar por encima de lo que
+    # gasta `max_turns`, o `MaxTurnsMiddleware` no llega a dispararse nunca.
+    #
+    # `middleware.py` dice desde siempre que "we set a high value to let our
+    # guard fire first" -- y no lo ponia nadie. Sin este valor, LangGraph usa
+    # su default de 25, que es la MITAD de `max_turns=50`: el guard, que existe
+    # para cortar limpio con un mensaje al estudiante, era inalcanzable por
+    # construccion. Lo que se alcanzaba era `GraphRecursionError`, que mata el
+    # turno a mitad del stream y deja la respuesta cortada en la pantalla --
+    # a media palabra, porque el texto se estaba escribiendo token a token.
+    # Medido en dev el 2026-08-11 a las 01:46 UTC.
+    #
+    # No es 1:1 con `max_turns`: un super-paso es un nodo del grafo, y una
+    # vuelta del agente gasta varios (modelo, herramientas, vuelta al modelo).
+    # 300 deja holgura de sobra para las 50 vueltas y sigue acotando una fuga
+    # de verdad. No se pone 9999 a proposito: eso convierte un bucle infinito
+    # en una factura de Bedrock en vez de un error.
+    graph_recursion_limit: int = 300
     # Per-session cap on web_search tool calls (prevents Tavily quota
     # burn on runaway planner loops). Set to 0 to disable the cap.
     max_web_searches_per_session: int = 6
