@@ -86,6 +86,25 @@ _NARRATIVE_MARKERS = (
     "administra",
 )
 
+# Pedir el informe es la peticion mas importante del producto y casi siempre
+# cabe en cinco palabras: "generame mi reporte de orientacion" son cinco,
+# "quiero mi informe" tres. Sin esta lista caian en el carril rapido por
+# cortas, y ahi el turno no se puede atender: `publish_orientation_report`
+# vive SOLO en el subagente de report (`src/agent/subagents/report.py`), asi
+# que el agente principal tiene que delegar con `task`, y el modelo rapido no
+# delega. Lo que pasaba en su lugar, medido en dev el 2026-08-11: el modelo se
+# ponia a escribir el informe a mano en el chat --lo que D6 del ADR-019
+# prohibe-- y sus `write_file` volvian troceados por `max_tokens`, seis
+# seguidos, que el estudiante veia como "no pudo completarse".
+#
+# Va antes que el saludo a proposito: "hola, generame mi informe" son cuatro
+# palabras que empiezan por "hola", y sin este orden se irian por "greeting".
+_REPORT_KEYWORDS = (
+    "informe",
+    "reporte",
+    "pdf",
+)
+
 _SHORT_TURN_MAX_WORDS = 8
 
 
@@ -121,6 +140,9 @@ def classify_intent(messages: Sequence[BaseMessage]) -> str:
     "assessment_answer", "clarification") or "complex" (the default,
     routed to the strong model) when no heuristic matches or the last
     human message can't be read as plain text.
+
+    Pedir el informe devuelve siempre "complex", por corta que sea la frase:
+    ver :data:`_REPORT_KEYWORDS`.
     """
     text = _last_human_text(messages)
     if text is None:
@@ -129,6 +151,9 @@ def classify_intent(messages: Sequence[BaseMessage]) -> str:
     stripped = text.strip()
     lowered = stripped.lower()
     word_count = len(stripped.split())
+
+    if any(keyword in lowered for keyword in _REPORT_KEYWORDS):
+        return "complex"
 
     if word_count <= _GREETING_MAX_WORDS and any(
         lowered.startswith(prefix) for prefix in _GREETING_PREFIXES

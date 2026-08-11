@@ -114,6 +114,58 @@ class TestClassifyIntentAssessmentAnswer:
         assert classify_intent(messages) == "clarification"
 
 
+class TestPedirElInformeNuncaVaPorElCarrilRapido:
+    """La peticion mas importante del producto cabe en cinco palabras.
+
+    Sin esto se clasificaba "clarification" por corta y se atendia con el
+    modelo rapido, que no delega en el subagente de report -- el unico que
+    tiene `publish_orientation_report`. Medido en dev el 2026-08-11: el
+    modelo escribia el informe a mano en el chat (contra D6 del ADR-019) y
+    sus `write_file` volvian troceados por `max_tokens`.
+    """
+
+    @pytest.mark.parametrize(
+        "frase",
+        [
+            "Podrias generar mi reporte para poder revisarlo?",
+            # La que manda el boton de la web (enmienda a D4 del ADR-019).
+            "generame mi reporte de orientacion",
+            "quiero mi informe",
+            "genera el PDF de mi informe",
+            # Empieza por "hola" y son cuatro palabras: sin el orden correcto
+            # de las comprobaciones, esta se iria por "greeting".
+            "hola, generame mi informe",
+        ],
+    )
+    def test_pedir_el_informe_es_complex(self, frase):
+        assert classify_intent([_human(frase)]) == "complex"
+
+    def test_tambien_cuando_responde_a_una_pregunta_del_cuestionario(self):
+        """El informe gana al carril de `assessment_answer`: si el estudiante
+        cambia de tema para pedirlo, la peticion sigue siendo lo importante."""
+        historia = [
+            _ai("En una escala del 1 al 10, cuanto disfrutas construir cosas?"),
+            _human("mejor dame mi informe"),
+        ]
+        assert classify_intent(historia) == "complex"
+
+
+class TestElCarrilRapidoSigueVivo:
+    """El arreglo de arriba no puede vaciar el carril rapido: la cobertura de
+    Haiku es lo que sostiene el coste por turno (leccion 9 del POC v2)."""
+
+    @pytest.mark.parametrize(
+        ("frase", "esperado"),
+        [
+            ("Hola", "greeting"),
+            ("jaja que buena", "chitchat"),
+            ("si", "clarification"),
+        ],
+    )
+    def test_lo_corto_y_sin_sustancia_sigue_yendo_rapido(self, frase, esperado):
+        assert classify_intent([_human(frase)]) == esperado
+
+
 class TestFastIntentsConstant:
     def test_all_four_documented_intents_are_present(self):
         assert {"greeting", "chitchat", "assessment_answer", "clarification"} == FAST_INTENTS
