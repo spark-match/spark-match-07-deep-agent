@@ -119,6 +119,12 @@ CHANGELOG.md
 # Makefile (host-side convenience only)
 Makefile
 
+# La receta para rehacer los estaticos de Fraunces. Los .ttf de al lado SI
+# viajan --son los que dibujan los titulares del informe--; el script no: se
+# corre a mano, importa fontTools (que no es dependencia del agente) y en
+# runtime no lo llama nadie.
+src/reports/fonts/instanciar.py
+
 # Windows-specific junk
 Thumbs.db
 desktop.ini

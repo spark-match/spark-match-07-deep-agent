@@ -1,27 +1,34 @@
 /* Hoja de estilos del informe en PDF (ADR-019, D11).
  *
- * Hermana de `.prose` del frontend, no una invencion nueva: mismas jerarquias,
- * misma paleta, misma tipografia. Un informe que no se parece al producto del
+ * Hermana del frontend, no una invencion nueva: misma paleta, mismas dos
+ * tipografias, misma jerarquia. Un informe que no se parece al producto del
  * que salio da mala espina justo cuando mas confianza hace falta.
  *
  * Tres cosas que se apartan de la web, y por que:
  *
- * 1. **El fondo es blanco, no crema.** La web usa `--cream` (#f9f5ec) en el
- *    body. En pantalla no cuesta nada; impreso, un fondo de color se paga en
- *    tinta en cada pagina, y este documento lo van a imprimir en cabinas donde
- *    se cobra por hoja. El color de marca se queda en titulares y filetes.
+ * 1. **El fondo de las paginas de contenido es blanco, no crema.** La web usa
+ *    `--cream` (#f9f5ec) en el body. En pantalla no cuesta nada; impreso, un
+ *    fondo de color se paga en tinta en CADA pagina, y este documento lo van a
+ *    imprimir en cabinas donde se cobra por hoja.
  *
- * 2. **Todo en Inter, sin el serif de titulares.** La web usa Fraunces para
- *    los encabezados, pero Fraunces no esta empaquetada en Debian y no se
- *    puede instalar en la imagen sin vendorizar el binario. Poner OTRO serif
- *    en su lugar se leeria como un error; un documento de una sola familia se
- *    lee como una decision. Cuando se vendorice Fraunces, esto son un
- *    @font-face y una linea.
+ *    La portada es la excepcion y es deliberada: una sola pagina con la banda
+ *    de marca, que es donde el documento se presenta. Una pagina de color en
+ *    un informe de cinco es un coste que se nota poco y una diferencia que se
+ *    nota mucho. El resto sigue en blanco.
+ *
+ * 2. **Fraunces esta vendorizada, no instalada.** No esta empaquetada en
+ *    Debian y el contenedor no sale a internet, asi que los dos estaticos de
+ *    `fonts/` viajan en el repositorio y se declaran aqui con @font-face. Ver
+ *    `fonts/instanciar.py` para saber de donde salen y por que son estaticos.
+ *
+ *    Las rutas son relativas a ESTE fichero. WeasyPrint recibe la hoja por
+ *    `CSS(filename=...)` y resuelve los `url()` contra su carpeta, que es la
+ *    misma en la que esta `fonts/`.
  *
  * 3. **Los colores van en hex, no en oklch().** WeasyPrint no entiende
  *    `oklch()`, y la paleta del frontend esta escrita entera en ese espacio.
- *    Estan convertidos con el script del scratchpad; el valor original va
- *    comentado al lado para poder rehacer la conversion.
+ *    Estan convertidos; el valor original va comentado al lado para poder
+ *    rehacer la conversion.
  *
  *    Ojo: `--teal-deep` y `--teal-glow` CAEN FUERA de la gama sRGB y estan
  *    recortados. No es un fallo de conversion ni algo que arreglar -- un PDF
@@ -30,13 +37,33 @@
  *    esto y es correcto.
  */
 
+/* Un solo grosor, y a proposito. Fraunces es aqui la letra de los titulares y
+ * de nada mas -- el cuerpo va en Inter, igual que en la web--, y ahi no hay
+ * mas grosor que el 600. Empaquetar tambien la Regular seria meter 73 KB en la imagen
+ * que no dibuja ni un caracter, y de esos ficheros nadie se acuerda cuando hay
+ * que auditar que lleva el contenedor.
+ *
+ * Si algun dia hace falta otro grosor: `fonts/instanciar.py` lo saca de la
+ * variable en una linea. Lo que NO hay que hacer es pedir un peso que no esta
+ * declarado, porque entonces no falla nada: el motor sintetiza una negrita
+ * falsa o se cae a Georgia, que en el contenedor tampoco existe. */
+@font-face {
+  font-family: 'Fraunces';
+  src: url('fonts/Fraunces-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+}
+
 :root {
   --teal-deep: #005b5c;      /* oklch(0.42 0.09 195), recortado a gama sRGB */
   --teal-glow: #009f82;      /* oklch(0.62 0.13 175), recortado a gama sRGB */
   --ink: #061d2b;            /* oklch(0.22 0.04 240) */
   --muted: #829298;          /* oklch(0.65 0.02 220) */
   --border: #dcd7cd;         /* oklch(0.88 0.015 85) */
-  --surface: #f9f5ec;        /* oklch(0.97 0.012 85) -- solo en las fichas */
+  --surface: #f9f5ec;        /* oklch(0.97 0.012 85) */
+
+  --display: 'Fraunces', Georgia, serif;
+  --texto: Inter, sans-serif;
 }
 
 @page {
@@ -47,7 +74,7 @@
     content: "Spark Match — informe de orientación vocacional";
     font-family: Inter, sans-serif;
     font-size: 8pt;
-    color: var(--muted);
+    color: #829298;
   }
 
   /* Con el total delante se sabe si falta una hoja. Un informe que se imprime
@@ -56,53 +83,186 @@
     content: counter(page) " de " counter(pages);
     font-family: Inter, sans-serif;
     font-size: 8pt;
-    color: var(--muted);
+    color: #829298;
   }
 }
 
+/* La portada no lleva pie: numerar la primera pagina de un documento que se
+ * presenta a si mismo es andamiaje a la vista. Los margenes se van a cero
+ * porque la banda de marca sangra hasta el borde del papel. */
+@page portada {
+  margin: 0;
+
+  @bottom-left { content: none; }
+  @bottom-right { content: none; }
+}
+
 body {
-  font-family: Inter, sans-serif;
+  font-family: var(--texto);
   font-size: 10.5pt;
   line-height: 1.55;
   color: var(--ink);
   margin: 0;
 }
 
-h1 {
-  font-size: 21pt;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--teal-deep);
-  margin: 0 0 0.2em;
+/* =========================================================================
+   Portada
+   ========================================================================= */
+
+.portada {
+  page: portada;
+  break-after: page;
+  /* La banda superior es el unico fondo de color del documento. Se hace con un
+   * gradiente de dos paradas duras en vez de un div aparte: asi el color llega
+   * al borde del papel sin depender de que la impresora respete el sangrado.
+   *
+   * Los 125mm no son redondos por casualidad: el bloque del codigo RIASEC cae
+   * entre 111 y 142mm, asi que el corte lo parte casi por la mitad. Si se
+   * mueve el titulo o la bajada hay que volver a medir --el efecto solo
+   * funciona si la caja queda a caballo, y una caja entera al lado de la linea
+   * parece un fallo de maquetacion, no una decision. */
+  background: linear-gradient(
+    to bottom,
+    var(--teal-deep) 0,
+    var(--teal-deep) 125mm,
+    #ffffff 125mm,
+    #ffffff 100%
+  );
+  /* 296 y no 297: la caja tiene que llenar la pagina para que los datos de
+   * abajo se peguen al pie, pero una caja de exactamente el alto del papel se
+   * desborda a la pagina siguiente en cuanto el redondeo del motor sale por
+   * arriba. Ese milimetro de holgura no se ve --el pie ya esta a 24mm-- y es
+   * la diferencia entre un informe de 3 paginas y uno de 4 con una en blanco. */
+  height: 296mm;
+  padding: 26mm 22mm 24mm;
+  box-sizing: border-box;
+  /* Columna para poder empujar los datos al pie de la pagina. Sin esto la
+   * portada terminaba a media altura y dejaba 120mm de blanco debajo, que en
+   * una portada no se lee como aire sino como que falta algo. */
+  display: flex;
+  flex-direction: column;
 }
 
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 3mm;
+  color: #ffffff;
+}
+
+.marca__logo {
+  width: 11mm;
+  height: 11mm;
+}
+
+.marca__nombre {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 17pt;
+  letter-spacing: -0.01em;
+}
+
+.portada__titulo {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 30pt;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  margin: 16mm 0 0;
+  max-width: 130mm;
+}
+
+.portada__bajada {
+  color: #cfe6e2;
+  font-size: 11pt;
+  line-height: 1.5;
+  margin: 5mm 0 0;
+  max-width: 110mm;
+}
+
+/* --- El codigo RIASEC como elemento grafico ---
+ *
+ * Cae a caballo entre la banda y el blanco, a proposito: es la pieza que une
+ * las dos mitades de la portada y lo primero que se mira. */
+
+.codigo {
+  display: flex;
+  gap: 4mm;
+  margin: 18mm 0 0;
+}
+
+.codigo__pieza {
+  flex: 1;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 3mm;
+  padding: 6mm 4mm 5mm;
+  text-align: center;
+}
+
+.codigo__letra {
+  display: block;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 34pt;
+  line-height: 1;
+  color: var(--teal-deep);
+}
+
+.codigo__nombre {
+  display: block;
+  font-size: 9pt;
+  color: var(--muted);
+  margin-top: 2.5mm;
+}
+
+.portada__datos {
+  display: flex;
+  gap: 10mm;
+  /* `auto` y no una medida: es lo que lo pega al pie de la portada pase lo que
+   * pase con la altura del titulo. */
+  margin: auto 0 0;
+  padding-top: 7mm;
+  border-top: 1px solid var(--border);
+}
+
+.portada__dato-valor {
+  display: block;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 15pt;
+  color: var(--ink);
+}
+
+.portada__dato-etiqueta {
+  display: block;
+  font-size: 8.5pt;
+  color: var(--muted);
+  margin-top: 1mm;
+}
+
+/* =========================================================================
+   Titulares del contenido
+   ========================================================================= */
+
 h2 {
-  font-size: 14pt;
+  font-family: var(--display);
+  font-size: 16pt;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--teal-deep);
-  margin: 1.6em 0 0.6em;
-  padding-bottom: 0.25em;
+  margin: 0 0 5mm;
+  padding-bottom: 2mm;
   border-bottom: 1.5px solid var(--border);
   /* Un encabezado solo al pie de una pagina es la unica rotura de maquetacion
    * que un lector nota sin buscarla. */
   break-after: avoid;
 }
 
-h3 {
-  font-size: 11.5pt;
-  font-weight: 600;
-  color: var(--ink);
-  margin: 1.4em 0 0.15em;
-  break-after: avoid;
-}
-
-/* La linea de institucion, que va justo debajo de cada h3. */
-h3 + p {
-  color: var(--muted);
-  font-size: 9.5pt;
-  margin: 0 0 0.7em;
-  break-after: avoid;
+.carreras,
+.procedencia {
+  margin-top: 10mm;
 }
 
 p {
@@ -117,50 +277,187 @@ strong {
   font-weight: 600;
 }
 
-/* --- La ficha de cifras de cada carrera --- */
+/* El retrato del perfil se lee de corrido, asi que se le pone medida: una
+ * linea de 174mm a 10.5pt son mas de cien caracteres y el ojo pierde el
+ * renglon al volver. */
+.perfil__texto {
+  max-width: 155mm;
+}
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0 0 0.9em;
-  font-size: 9.5pt;
-  /* Cuatro filas caben siempre en una pagina: partirlas no ahorra espacio y
-   * deja la mitad de las cifras huerfanas de su carrera. */
+.perfil__texto p:last-child {
+  margin-bottom: 0;
+}
+
+/* =========================================================================
+   La ficha de cada carrera
+   ========================================================================= */
+
+.ficha {
+  border: 1px solid var(--border);
+  border-radius: 3mm;
+  padding: 6mm 6mm 5mm;
+  margin-bottom: 6mm;
+  /* Una ficha partida entre dos paginas deja las cifras huerfanas de su
+   * carrera, que es justo lo que el estudiante esta comparando. */
   break-inside: avoid;
 }
 
-th {
-  display: none;  /* Los encabezados "Dato | Valor" son andamiaje del Markdown. */
+.ficha__cabecera {
+  display: flex;
+  align-items: flex-start;
+  gap: 4mm;
 }
 
-td {
-  padding: 0.3em 0.6em;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+/* El puesto en el ranking, que en una lista de diez es la mitad de la
+ * informacion y en la version anterior solo existia como el "3." de un
+ * encabezado de Markdown. */
+.ficha__puesto {
+  flex: none;
+  width: 9mm;
+  height: 9mm;
+  border-radius: 50%;
+  background: var(--teal-deep);
+  color: #ffffff;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 12pt;
+  line-height: 9mm;
+  text-align: center;
 }
 
-td:first-child {
+.ficha__nombre h3 {
+  font-family: var(--display);
+  font-size: 14pt;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.ficha__lugar {
   color: var(--muted);
-  width: 42%;
+  font-size: 9pt;
+  margin: 1.5mm 0 0;
 }
 
-td:last-child {
+/* --- La barra de afinidad --- */
+
+.afinidad {
+  display: flex;
+  align-items: center;
+  gap: 4mm;
+  margin: 5mm 0 5mm;
+}
+
+.afinidad__pista {
+  flex: 1;
+  height: 2.6mm;
+  border-radius: 1.3mm;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.afinidad__nivel {
+  display: block;
+  height: 100%;
+  border-radius: 1.3mm;
+  background: linear-gradient(to right, var(--teal-deep), var(--teal-glow));
+}
+
+.afinidad__cifra {
+  flex: none;
+  font-size: 9.5pt;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  font-weight: 500;
+  color: var(--teal-deep);
 }
 
-/* --- Las notas de procedencia --- */
+/* --- Las cuatro cifras, en bloques como en la web ---
+ *
+ * Antes era una tabla de dos columnas: etiqueta a la izquierda, valor a la
+ * derecha, cuatro filas. Se lee de una en una. En bloques las cuatro se ven a
+ * la vez y se pueden comparar entre carreras a la altura de la pagina, que es
+ * como se usa realmente este documento. */
+
+.cifras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3mm;
+}
+
+.cifra {
+  /* Dos por fila y no cuatro: "Ingreso mensual al egresar" no cabe en 40mm sin
+   * partirse en tres lineas. */
+  width: calc(50% - 1.5mm);
+  box-sizing: border-box;
+  background: var(--surface);
+  border-radius: 2mm;
+  padding: 3.5mm 4mm;
+}
+
+.cifra__valor {
+  display: block;
+  font-size: 12.5pt;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.cifra__etiqueta {
+  display: block;
+  font-size: 8.5pt;
+  color: var(--muted);
+  margin-top: 1mm;
+}
+
+/* La marca de dato imputado. Va pegada a la etiqueta y no al numero: el valor
+ * tiene que poder leerse de un vistazo, y la advertencia se lee al detenerse.
+ * Que se vea es innegociable -- sin ella un ingreso imputado es
+ * indistinguible de uno publicado. */
+.cifra__estimado {
+  display: inline-block;
+  margin-left: 1.5mm;
+  padding: 0.3mm 1.5mm;
+  border: 1px solid var(--border);
+  border-radius: 1mm;
+  background: #ffffff;
+  font-size: 7pt;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.ficha__insight {
+  margin-top: 4mm;
+  padding-top: 4mm;
+  border-top: 1px solid var(--border);
+}
+
+.ficha__insight p:last-child {
+  margin-bottom: 0;
+}
+
+/* =========================================================================
+   Las notas de procedencia
+   ========================================================================= */
 
 /* La ultima seccion explica de donde salen las cifras y que significa
  * "estimado". Va mas pequena porque es referencia, no lectura -- pero no gris
  * claro: es justo lo que hay que poder leer cuando alguien discute un numero. */
-h2 + ul,
-ul {
+.procedencia ul {
   font-size: 9.5pt;
   padding-left: 1.1em;
-  margin: 0 0 0.8em;
+  margin: 0;
 }
 
-li {
+.procedencia li {
   margin-bottom: 0.35em;
+}
+
+.procedencia code {
+  font-size: 8.5pt;
+  background: var(--surface);
+  padding: 0.2mm 1mm;
+  border-radius: 1mm;
 }
