@@ -71,10 +71,21 @@ class TestFormatoDeCifras:
         assert "S/ 4,261" in texto
 
     def test_la_admision_se_lee_en_porcentaje(self):
-        # Viaja como 0-1 y nadie lee "0.03" como "3 de cada 100".
-        texto = report_to_markdown(informe(careers=[carrera(admission_rate=0.03)]))
+        """Viaja 0-100 y se pinta tal cual.
 
-        assert "3%" in texto
+        Multiplicarla por cien --que es lo que se hacia, siguiendo un contrato
+        que decia 0-1-- convertia el 17% de Geofisica en un 1700% impreso en
+        el informe del estudiante. Visto en dev el 2026-08-11.
+        """
+        texto = report_to_markdown(informe(careers=[carrera(admission_rate=17.0)]))
+
+        assert "17%" in texto
+        assert "1700%" not in texto
+
+    def test_una_admision_de_dos_cifras_no_se_infla(self):
+        texto = report_to_markdown(informe(careers=[carrera(admission_rate=46.0)]))
+
+        assert "46%" in texto
 
     def test_los_anios_se_dicen_en_singular_cuando_es_uno(self):
         texto = report_to_markdown(informe(careers=[carrera(duration_years=1.0)]))

@@ -57,7 +57,16 @@ class ReportCareer(BaseModel):
     duration_years: float = Field(description="Duracion en anios.")
     monthly_income: float = Field(description="Ingreso mensual de egresados, en soles.")
     annual_cost: float = Field(description="Costo anual, en soles.")
-    admission_rate: float = Field(description="Tasa de admision, 0-1.")
+    admission_rate: float = Field(
+        description=(
+            "Tasa de admision, **0-100**. Es el porcentaje ya hecho, no una "
+            "fraccion: la columna del catalogo trae 60, 88, 33. El nombre dice "
+            "'rate' y durante un tiempo los tres consumidores (este modelo, el "
+            "PDF y la web) documentaron 0-1 y multiplicaban por cien, asi que "
+            "un 17% se enseñaba como 1700%. El dato nunca fue una fraccion; lo "
+            "que estaba mal era el contrato."
+        )
+    )
     match_score: float = Field(description="Puntuacion de Spark Match, 0-100.")
     score_breakdown: dict[str, float] = Field(
         description="De donde sale la puntuacion, por componente."

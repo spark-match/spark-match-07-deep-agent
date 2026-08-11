@@ -32,7 +32,9 @@ def carrera(**overrides: object) -> ReportCareer:
         "duration_years": 5.0,
         "monthly_income": 4261.0,
         "annual_cost": 50.0,
-        "admission_rate": 0.03,
+        # 0-100, como en el catalogo. Ver la descripcion del campo en
+        # `ReportCareer`: el contrato decia 0-1 y el dato nunca lo fue.
+        "admission_rate": 3.0,
         "match_score": 87.4,
         "score_breakdown": dict(BREAKDOWN),
         "estimated": [],
@@ -57,7 +59,7 @@ def informe(**overrides: object) -> OrientationReport:
                 management_type="Privada",
                 monthly_income=3590.0,
                 annual_cost=280.0,
-                admission_rate=0.19,
+                admission_rate=19.0,
                 match_score=71.2,
                 estimated=["monthly_income"],
                 insight="Comparte el método pero con más laboratorio.",

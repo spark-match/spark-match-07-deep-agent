@@ -75,9 +75,13 @@ def _anios(cantidad: float) -> str:
     return f"{cantidad:.1f} años"
 
 
-def _porcentaje(fraccion: float) -> str:
-    """La tasa de admision viaja 0-1 y se lee en porcentaje."""
-    return f"{fraccion * 100:.0f}%"
+def _porcentaje(valor: float) -> str:
+    """La tasa de admision ya viaja en porcentaje: 0-100, no 0-1.
+
+    Multiplicarla por cien --que es lo que se hacia-- convertia un 17% en un
+    1700%. Ver la descripcion del campo en :class:`ReportCareer`.
+    """
+    return f"{valor:.0f}%"
 
 
 def _valor(carrera: ReportCareer, campo: str) -> str:

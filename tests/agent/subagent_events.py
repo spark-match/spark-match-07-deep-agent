@@ -21,12 +21,14 @@ from langchain_core.tools import BaseTool
 
 from src.agent.factory import create_spark_agent
 from src.agent.subagent_events import (
+    REPORT_READY_EVENT,
     SUBAGENT_END_EVENT,
     SUBAGENT_START_EVENT,
     UNKNOWN_SUBAGENT,
     SubagentEventsMiddleware,
     _emit,
     _subagent_type,
+    avisar_informe_listo,
 )
 
 
@@ -288,3 +290,45 @@ class TestSubagentEventsReachTheStream:
         assert by_name[SUBAGENT_START_EVENT]["subagent"] == "matching"
         assert by_name[SUBAGENT_START_EVENT]["toolCallId"] == "call_subagente"
         assert by_name[SUBAGENT_END_EVENT]["ok"] is True
+
+
+class TestElAvisoDeInformeListo:
+    """La pantalla se entera de que hay un informe que abrir.
+
+    El contenido del informe no vuelve al contexto a proposito, asi que lo
+    unico que llegaba al chat era el modelo diciendo "tu informe esta listo"
+    sin nada que pulsar, y el estudiante tenia que adivinar que habia una
+    seccion "Reporte" en el menu.
+    """
+
+    async def test_emite_el_evento_con_el_id(self, monkeypatch):
+        emitidos: list[tuple[str, dict[str, Any]]] = []
+
+        async def fake_adispatch(name, payload):
+            emitidos.append((name, payload))
+
+        monkeypatch.setattr("src.agent.subagent_events.adispatch_custom_event", fake_adispatch)
+
+        await avisar_informe_listo("rep-1", ["Ingeniería Geofísica", "Física"])
+
+        assert emitidos == [
+            (
+                REPORT_READY_EVENT,
+                {"reportId": "rep-1", "careers": ["Ingeniería Geofísica", "Física"]},
+            )
+        ]
+
+    async def test_sin_callbacks_no_tumba_el_turno(self, monkeypatch):
+        """El informe ya se emitio; que el aviso no llegue no puede romperlo.
+
+        `adispatch_custom_event` lanza `RuntimeError` si nadie invoco el grafo
+        con callbacks en contexto. El peor caso aceptable es el de antes: que
+        haya que ir a buscar el informe al menu.
+        """
+
+        async def revienta(name, payload):
+            raise RuntimeError("sin callback manager")
+
+        monkeypatch.setattr("src.agent.subagent_events.adispatch_custom_event", revienta)
+
+        await avisar_informe_listo("rep-1", [])
