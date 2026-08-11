@@ -18,7 +18,9 @@ from langgraph.types import Command
 from src.agent.subagent_carryover import (
     CLAVE,
     INFORME,
+    PASOS,
     SubagentCarryoverMiddleware,
+    SubagentStepsMiddleware,
     adjuntar,
     anotar,
     buzon_abierto,
@@ -40,6 +42,24 @@ def _delegacion(call_id: str = "tc1"):
 def _resultado(call_id: str = "tc1") -> Command[Any]:
     """Lo que devuelve deepagents: un Command con UN ToolMessage dentro."""
     return Command(update={"messages": [ToolMessage(content="listo", tool_call_id=call_id)]})
+
+
+_contador = iter(range(1, 1000))
+
+
+def _llamada_interna(nombre: str, **args: Any):
+    """Una llamada de las que el subagente hace por dentro."""
+    return _FakeToolCallRequest({"name": nombre, "id": f"in{next(_contador)}", "args": args})
+
+
+async def _fue_bien(request):
+    return ToolMessage(content="[...]", tool_call_id=request.tool_call["id"])
+
+
+async def _fue_mal(request):
+    return ToolMessage(
+        content="Error: no hay catalogo", tool_call_id=request.tool_call["id"], status="error"
+    )
 
 
 class TestBuzon:
@@ -210,6 +230,19 @@ class TestSubagentCarryoverMiddleware:
             pass
         assert siguiente == {}
 
+    async def test_los_pasos_de_dentro_salen_pegados_al_resultado(self):
+        async def handler(_request):
+            await SubagentStepsMiddleware().awrap_tool_call(
+                _llamada_interna("search_careers", query="ingenieria"), _fue_bien
+            )
+            return _resultado()
+
+        salida = await SubagentCarryoverMiddleware().awrap_tool_call(_delegacion(), handler)
+
+        assert isinstance(salida, Command)
+        pasos = lo_recogido(salida.update["messages"][0])[PASOS]
+        assert [p["tool"] for p in pasos] == ["search_careers"]
+
     async def test_lo_escrito_desde_una_task_hija_tambien_llega(self):
         """La premisa del mecanismo, y no es obvia.
 
@@ -232,3 +265,101 @@ class TestSubagentCarryoverMiddleware:
 
         assert isinstance(salida, Command)
         assert lo_recogido(salida.update["messages"][0]) == {INFORME: "r-9"}
+
+
+class TestSubagentStepsMiddleware:
+    """Lo que hace que al recargar el chip diga 8 pasos y no 1.
+
+    Va cableado DENTRO de cada subagente: la lista `middleware=[...]` del
+    coordinador no baja a ellos, asi que estar dentro es la unica forma de ver
+    lo que hacen.
+    """
+
+    async def test_anota_la_llamada_con_su_asunto(self):
+        with buzon_abierto() as caja:
+            await SubagentStepsMiddleware().awrap_tool_call(
+                _llamada_interna("search_careers", query="ingeniería industrial"), _fue_bien
+            )
+
+        assert caja[PASOS][0]["tool"] == "search_careers"
+        assert caja[PASOS][0]["subject"] == "ingeniería industrial"
+
+    async def test_anota_el_resultado_de_cada_una(self):
+        # Un paso que fallo y otro que no se leen distinto, y el chip ya sabe
+        # pintar las dos cosas.
+        medio = SubagentStepsMiddleware()
+        with buzon_abierto() as caja:
+            await medio.awrap_tool_call(_llamada_interna("search_careers", query="a"), _fue_bien)
+            await medio.awrap_tool_call(_llamada_interna("search_careers", query="b"), _fue_mal)
+
+        assert [p["ok"] for p in caja[PASOS]] == [True, False]
+
+    async def test_no_saca_argumentos_que_nadie_autorizo(self):
+        # Aqui se ESCRIBE en el checkpoint, asi que filtrar despues llegaria
+        # tarde: el argumento ya estaria persistido.
+        with buzon_abierto() as caja:
+            await SubagentStepsMiddleware().awrap_tool_call(
+                _llamada_interna(
+                    "publish_orientation_report",
+                    profile_summary="tres parrafos sobre el estudiante",
+                    insights=[{"career": "x", "insight": "y"}],
+                ),
+                _fue_bien,
+            )
+
+        paso = caja[PASOS][0]
+        assert paso["tool"] == "publish_orientation_report"
+        assert "subject" not in paso
+        assert "estudiante" not in str(paso)
+
+    async def test_el_orden_es_el_de_las_llamadas(self):
+        medio = SubagentStepsMiddleware()
+        with buzon_abierto() as caja:
+            await medio.awrap_tool_call(_llamada_interna("recommend_programs"), _fue_bien)
+            await medio.awrap_tool_call(_llamada_interna("web_search", query="becas"), _fue_bien)
+
+        assert [p["tool"] for p in caja[PASOS]] == ["recommend_programs", "web_search"]
+
+    async def test_sin_buzon_abierto_no_pasa_nada(self):
+        # Un subagente invocado por su cuenta en un test no tiene padre a quien
+        # contarle nada, y eso no es un error.
+        salida = await SubagentStepsMiddleware().awrap_tool_call(
+            _llamada_interna("search_careers", query="x"), _fue_bien
+        )
+
+        assert isinstance(salida, ToolMessage)
+
+    async def test_el_resultado_de_la_herramienta_pasa_intacto(self):
+        # Esto envuelve TODAS las llamadas del subagente: si tocara el
+        # resultado, tocaria el trabajo entero del especialista.
+        with buzon_abierto():
+            salida = await SubagentStepsMiddleware().awrap_tool_call(
+                _llamada_interna("search_careers", query="x"), _fue_bien
+            )
+
+        assert salida.content == "[...]"
+
+    async def test_por_encima_del_tope_deja_de_anotar(self):
+        # El caso patologico: un subagente en bucle escribiria cientos de
+        # entradas en un checkpoint que se relee en cada turno posterior.
+        medio = SubagentStepsMiddleware()
+        with buzon_abierto() as caja:
+            for _ in range(40):
+                await medio.awrap_tool_call(
+                    _llamada_interna("search_careers", query="x"), _fue_bien
+                )
+
+        assert len(caja[PASOS]) == 30
+
+    def test_el_hook_sincrono_tambien_anota(self):
+        # Un middleware que solo implementa uno hace que LangChain lance
+        # `NotImplementedError` en el otro modo, y no solo para esta llamada.
+        def handler(request):
+            return ToolMessage(content="[...]", tool_call_id=request.tool_call["id"])
+
+        with buzon_abierto() as caja:
+            SubagentStepsMiddleware().wrap_tool_call(
+                _llamada_interna("web_search", query="becas"), handler
+            )
+
+        assert caja[PASOS][0]["tool"] == "web_search"

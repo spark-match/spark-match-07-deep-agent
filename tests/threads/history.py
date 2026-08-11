@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
 
-from src.agent.subagent_carryover import CLAVE, INFORME
+from src.threads.activity import CLAVE, INFORME, PASOS
 from src.threads.history import _ASUNTO_POR_HERRAMIENTA, load_thread_messages
 
 
@@ -492,6 +492,134 @@ class TestElInformeEmitido:
 
         assert "report_id" not in messages[1]
         assert messages[1]["activity"][0]["subagent"] == "report"
+
+
+class TestLosPasosDelSubagente:
+    """En vivo el chip decia 8 pasos; al recargar, 1.
+
+    Los siete de dentro ocurren en el grafo del subagente y no llegan al
+    checkpoint del padre. Ahora viajan pegados al `ToolMessage` de la
+    delegacion, y esto comprueba que salen como hermanos suyos -- que es como
+    el estudiante los vio la primera vez.
+    """
+
+    @staticmethod
+    def _delegacion_con_pasos(*pasos: dict) -> ToolMessage:
+        return ToolMessage(
+            content="listo",
+            tool_call_id="tc1",
+            additional_kwargs={CLAVE: {PASOS: list(pasos)}},
+        )
+
+    @staticmethod
+    def _paso(tool: str, id_: str, **extra) -> dict:
+        return {"id": id_, "tool": tool, "ok": True, **extra}
+
+    async def test_los_pasos_salen_detras_de_su_delegacion(self, graph):
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="qué carreras me convienen"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="matching", description="x")],
+                ),
+                self._delegacion_con_pasos(
+                    self._paso("recommend_programs", "in1", subject="IRC"),
+                    self._paso("search_careers", "in2", subject="ingeniería"),
+                ),
+                AIMessage(content="estas"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert [a.get("subagent") or a["tool"] for a in actividad] == [
+            "matching",
+            "recommend_programs",
+            "search_careers",
+        ]
+
+    async def test_la_clave_interna_no_sale_hacia_el_navegador(self, graph):
+        # `steps` es como viajan por dentro; hacia fuera son chips hermanos.
+        # Dejarla puesta le daria al frontend dos formas de leer lo mismo.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="matching", description="x")],
+                ),
+                self._delegacion_con_pasos(self._paso("search_careers", "in1")),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert all("steps" not in a for a in actividad)
+
+    async def test_cada_delegacion_se_lleva_los_suyos(self, graph):
+        # Con dos especialistas en el mismo turno, los pasos de uno detras de
+        # una lista plana quedarian colgando del otro.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        _llamada("tc1", "task", subagent_type="matching", description="x"),
+                        _llamada("tc2", "task", subagent_type="planning", description="x"),
+                    ],
+                ),
+                ToolMessage(
+                    content="listo",
+                    tool_call_id="tc1",
+                    additional_kwargs={CLAVE: {PASOS: [self._paso("search_careers", "in1")]}},
+                ),
+                ToolMessage(
+                    content="listo",
+                    tool_call_id="tc2",
+                    additional_kwargs={CLAVE: {PASOS: [self._paso("web_search", "in2")]}},
+                ),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert [a.get("subagent") or a["tool"] for a in actividad] == [
+            "matching",
+            "search_careers",
+            "planning",
+            "web_search",
+        ]
+
+    async def test_una_delegacion_sin_pasos_sale_como_antes(self, graph):
+        # Los hilos que ya estaban guardados no llevan nada nuestro.
+        await _seed(
+            graph,
+            "t_1",
+            [
+                HumanMessage(content="ayúdame"),
+                AIMessage(
+                    content="",
+                    tool_calls=[_llamada("tc1", "task", subagent_type="matching", description="x")],
+                ),
+                ToolMessage(content="listo", tool_call_id="tc1"),
+                AIMessage(content="listo"),
+            ],
+        )
+
+        actividad = (await load_thread_messages(graph, "t_1"))[1]["activity"]
+
+        assert len(actividad) == 1
+        assert actividad[0]["subagent"] == "matching"
 
 
 class TestTurnosCortados:

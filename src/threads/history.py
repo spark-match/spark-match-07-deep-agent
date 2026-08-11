@@ -56,31 +56,18 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from src.agent.subagent_carryover import INFORME, lo_recogido
+from src.threads.activity import (
+    ASUNTO_POR_HERRAMIENTA,
+    INFORME,
+    PASOS,
+    lo_recogido,
+    resumen_publicable,
+)
 
-# Nombre con el que deepagents registra la herramienta de delegacion.
-_HERRAMIENTA_DE_DELEGACION = "task"
-
-# Que argumento de cada herramienta se puede enseñar. Lista BLANCA: lo que
-# no este aqui no sale, aunque la herramienta sea nueva. Un `dict` abierto
-# acabaria filtrando el primer argumento sensible que alguien añada.
-#
-# Los nombres tienen que existir de verdad en la firma de la herramienta, y
-# eso no se puede dejar al ojo: este mapa nacio con `search_programs: query`
-# y esa herramienta no tiene ningun `query` -- busca por `career`. La entrada
-# no fallaba, que es lo peor que podia hacer: `args.get("query")` devolvia
-# None y el chip salia sin asunto, indistinguible de una llamada sin nada que
-# enseñar. Lo cubre `TestLaListaBlancaApuntaAArgumentosReales`.
-_ASUNTO_POR_HERRAMIENTA: dict[str, str] = {
-    "search_careers": "query",
-    "search_programs": "career",
-    "web_search": "query",
-    "recommend_programs": "riasec_code",
-}
-
-# Un asunto es una etiqueta, no un texto. El modelo puede emitir una
-# consulta larguisima y esto va dentro de un chip.
-_MAX_ASUNTO = 80
+#: Reexportado por comodidad de quien ya lo importaba de aqui. La definicion
+#: vive en `src/threads/activity.py` desde que la comparte el middleware que
+#: resume los pasos de dentro de un subagente.
+_ASUNTO_POR_HERRAMIENTA = ASUNTO_POR_HERRAMIENTA
 
 
 class SupportsGetState(Protocol):
@@ -106,18 +93,44 @@ def _anotar_resultado(
     ``status`` es "error" cuando la herramienta reviento; cualquier otra
     cosa cuenta como exito.
 
-    Y recoge lo que la delegacion se trajo de dentro del subagente, que hoy es
-    el id del informe emitido. No sale de los argumentos ni del contenido: se
-    lo cuelga el middleware de `carryover` a este mismo mensaje, porque de un
-    subagente no vuelve mas que su texto final.
+    Y recoge lo que la delegacion se trajo de dentro del subagente: los pasos
+    que dio ahi dentro y el id del informe, si emitio uno. Ninguna de las dos
+    cosas sale de los argumentos ni del contenido -- se las cuelga el middleware
+    de `carryover` a este mismo mensaje, porque de un subagente no vuelve mas
+    que su texto final.
     """
+    recogido = lo_recogido(message)
+
     actividad = pendientes.get(str(getattr(message, "tool_call_id", "")))
     if actividad is not None:
         actividad["ok"] = getattr(message, "status", None) != "error"
+        pasos = recogido.get(PASOS)
+        if isinstance(pasos, list) and pasos:
+            # Colgados de SU delegacion y no anexados al final de `pendientes`:
+            # si el mismo mensaje abrio otra llamada despues, los pasos del
+            # especialista apareceria detras de ella y en desorden.
+            actividad["steps"] = pasos
 
-    report_id = lo_recogido(message).get(INFORME)
+    report_id = recogido.get(INFORME)
     if isinstance(report_id, str) and report_id:
         turno["report_id"] = report_id
+
+
+def _aplanada(pendientes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Las llamadas del turno, con los pasos de cada subagente detras del suyo.
+
+    El frontend los pinta como hermanos, que es como los ve en vivo: ahi cada
+    llamada de dentro del subagente emite su propio evento y su propio chip. Si
+    aqui salieran anidados, la misma conversacion se leeria de dos formas
+    distintas segun se acabara de generar o se hubiera recargado la pagina.
+    """
+    salida: list[dict[str, Any]] = []
+    for actividad in pendientes.values():
+        pasos = actividad.pop("steps", None)
+        salida.append(actividad)
+        if isinstance(pasos, list):
+            salida.extend(pasos)
+    return salida
 
 
 def _entrada_de_usuario(message: Any) -> dict[str, Any]:
@@ -141,7 +154,7 @@ def _entrada_del_asistente(
     """
     llamadas = getattr(message, "tool_calls", None) or []
     for tool_call in llamadas:
-        actividad = _actividad_de(tool_call)
+        actividad = resumen_publicable(tool_call)
         if actividad is not None:
             pendientes[actividad["id"]] = actividad
 
@@ -163,7 +176,7 @@ def _entrada_del_asistente(
     # ese texto es preambulo y el turno sigue, asi que colgarle ahi los
     # chips los pondria sobre la frase equivocada.
     if pendientes and not llamadas:
-        entrada["activity"] = list(pendientes.values())
+        entrada["activity"] = _aplanada(pendientes)
         pendientes.clear()
 
     # El enlace al informe se cuelga del MISMO mensaje que los chips y por la
@@ -196,51 +209,6 @@ def _text_of(content: Any) -> str:
                     parts.append(text)
         return "".join(parts)
     return ""
-
-
-def _recorta(valor: Any) -> str | None:
-    if not isinstance(valor, str):
-        valor = str(valor) if valor is not None else ""
-    limpio = " ".join(valor.split())
-    if not limpio:
-        return None
-    if len(limpio) <= _MAX_ASUNTO:
-        return limpio
-    return limpio[: _MAX_ASUNTO - 1].rstrip() + "…"
-
-
-def _actividad_de(tool_call: Any) -> dict[str, Any] | None:
-    """Resumen publicable de una llamada a herramienta."""
-    if not isinstance(tool_call, dict):
-        return None
-
-    nombre = tool_call.get("name")
-    if not isinstance(nombre, str) or not nombre:
-        return None
-
-    args = tool_call.get("args")
-    args = args if isinstance(args, dict) else {}
-
-    resumen: dict[str, Any] = {
-        "id": str(tool_call.get("id") or ""),
-        "tool": nombre,
-        "ok": None,
-    }
-
-    if nombre == _HERRAMIENTA_DE_DELEGACION:
-        # Solo la clave del especialista. `description`, el otro argumento,
-        # es el prompt que el coordinador le redacta y no es para leer.
-        subagente = args.get("subagent_type")
-        resumen["subagent"] = str(subagente) if subagente else "desconocido"
-        return resumen
-
-    campo = _ASUNTO_POR_HERRAMIENTA.get(nombre)
-    if campo is not None:
-        asunto = _recorta(args.get(campo))
-        if asunto is not None:
-            resumen["subject"] = asunto
-
-    return resumen
 
 
 async def load_thread_messages(

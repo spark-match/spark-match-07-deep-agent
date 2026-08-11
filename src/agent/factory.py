@@ -27,7 +27,7 @@ from src.agent.middleware import AssessmentOnceMiddleware, MaxTurnsMiddleware
 from src.agent.pii import PIIRedactionMiddleware
 from src.agent.report_gate import ReportGateMiddleware
 from src.agent.router_middleware import IntentRouterMiddleware
-from src.agent.subagent_carryover import SubagentCarryoverMiddleware
+from src.agent.subagent_carryover import SubagentCarryoverMiddleware, SubagentStepsMiddleware
 from src.agent.subagent_events import SubagentEventsMiddleware
 from src.agent.subagents import (
     ASSESSMENT_SUBAGENT,
@@ -219,10 +219,13 @@ def create_spark_agent(
     Lo que se produce dentro de un subagente:
     - ``SubagentCarryoverMiddleware`` abre un buzon alrededor de cada
       delegacion y vuelca lo que se escriba en el sobre el ``ToolMessage`` que
-      si se persiste. Hoy lleva una sola cosa, el id del informe emitido: sin
-      eso, al recargar la pagina el enlace al informe desaparecia, porque
-      ``publish_orientation_report`` corre dentro del subagente de report y de
-      ahi no vuelve mas que el texto final. Ver
+      si se persiste. Lleva dos cosas, y las dos se perdian al recargar porque
+      de un subagente no vuelve mas que su texto final: el **id del informe**
+      emitido (el enlace desaparecia aunque el informe siguiera ahi) y los
+      **pasos** que dio por dentro (el chip decia "1 paso" donde en vivo se
+      habian visto ocho).
+    - ``SubagentStepsMiddleware`` es quien los recoge, y va cableado en cada
+      subagente y no aqui: la lista de abajo no baja a ellos. Ver
       ``src/agent/subagent_carryover.py``.
 
     Visibilidad de la delegacion:
@@ -283,12 +286,24 @@ def create_spark_agent(
     # 2026-08-09: planning_query_cs revento con tool_use huerfano dentro del
     # subagente de planning, con la defensa cableada un nivel por encima.
     #
+    # `SubagentStepsMiddleware` va aqui por lo MISMO y no por casualidad: es la
+    # unica forma de ver lo que un subagente hace por dentro. Sin el, al
+    # recargar la pagina el chip decia "1 paso" donde en vivo se habian visto
+    # ocho -- los siete de dentro nunca llegaron al checkpoint del padre.
+    #
     # Instancia nueva por subagente a proposito: compartir una sola entre
     # grafos distintos es pedir que un estado se filtre entre ellos.
     subagents: Sequence[SubAgent] = cast(
         "Sequence[SubAgent]",
         [
-            {**spec, "middleware": [*spec.get("middleware", []), ToolCallRepairMiddleware()]}
+            {
+                **spec,
+                "middleware": [
+                    *spec.get("middleware", []),
+                    SubagentStepsMiddleware(),
+                    ToolCallRepairMiddleware(),
+                ],
+            }
             for spec in (
                 ASSESSMENT_SUBAGENT,
                 MATCHING_SUBAGENT,

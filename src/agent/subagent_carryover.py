@@ -53,15 +53,24 @@ from langgraph.types import Command
 
 from src.agent.subagent_events import SUBAGENT_TOOL_NAME
 
+# Las claves y el resumidor viven en `src/threads/activity.py`, que no importa
+# nada del proyecto: es lo unico que deja que el agente escriba y el historial
+# lea sin que los dos modulos se importen entre si. El ciclo lo cerraba
+# `src/threads/__init__.py`, y el sintoma era el arranque muriendo con un
+# `partially initialized module`.
+from src.threads.activity import CLAVE, INFORME, PASOS, lo_recogido, resumen_publicable
+
 logger = logging.getLogger(__name__)
 
-#: Bajo que clave viaja lo recogido dentro de ``additional_kwargs``. Con
-#: prefijo propio porque ese diccionario es de todos: los proveedores escriben
-#: ahi lo suyo y un nombre generico acabaria pisando o pisado.
-CLAVE = "spark"
-
-#: El id del informe emitido durante la delegacion.
-INFORME = "reportId"
+#: Cuantos pasos se guardan como mucho de una sola delegacion.
+#:
+#: Un subagente normal hace tres o cuatro llamadas y esto no le afecta. Lo que
+#: acota es el caso patologico: un bucle que se dispara hasta chocar con el
+#: limite de recursion escribiria cientos de entradas en el checkpoint, y ese
+#: checkpoint se relee entero en cada turno posterior de la conversacion. Lo
+#: que se descarta se registra -- un recorte silencioso se leeria luego como
+#: "el subagente solo hizo treinta cosas".
+_MAX_PASOS = 30
 
 _BUZON: ContextVar[dict[str, Any] | None] = ContextVar("spark_subagent_carryover", default=None)
 
@@ -92,6 +101,30 @@ def anotar(clave: str, valor: Any) -> None:
     caja = _BUZON.get()
     if caja is not None:
         caja[clave] = valor
+
+
+def anotar_paso(paso: dict[str, Any]) -> None:
+    """Añade una llamada a la lista de pasos de esta delegacion.
+
+    Como :func:`anotar`, no hace nada sin buzon abierto: un subagente invocado
+    por su cuenta en un test no tiene padre a quien contarle nada.
+    """
+    caja = _BUZON.get()
+    if caja is None:
+        return
+
+    pasos = caja.setdefault(PASOS, [])
+    if len(pasos) >= _MAX_PASOS:
+        # Una vez por paso descartado y no una al final: si esto aparece en el
+        # log, lo que hay detras es un subagente en bucle, y eso interesa mas
+        # que el recorte en si.
+        logger.warning(
+            "El subagente paso de %d llamadas; la de %r no se guarda en el historial",
+            _MAX_PASOS,
+            paso.get("tool"),
+        )
+        return
+    pasos.append(paso)
 
 
 def adjuntar(
@@ -142,19 +175,6 @@ def _con_lo_recogido(mensaje: ToolMessage, caja: dict[str, Any]) -> ToolMessage:
     return mensaje.model_copy(update={"additional_kwargs": extras})
 
 
-def lo_recogido(mensaje: Any) -> dict[str, Any]:
-    """Lo que se saco de una delegacion, o ``{}``.
-
-    Lo usa ``src/threads/history.py`` para republicarlo. Tolera cualquier forma
-    porque lee mensajes escritos por builds anteriores a que esto existiera.
-    """
-    extras = getattr(mensaje, "additional_kwargs", None)
-    if not isinstance(extras, dict):
-        return {}
-    nuestro = extras.get(CLAVE)
-    return nuestro if isinstance(nuestro, dict) else {}
-
-
 class SubagentCarryoverMiddleware(AgentMiddleware):
     """Abre el buzon alrededor de cada delegacion y lo vuelca en el resultado.
 
@@ -182,12 +202,76 @@ class SubagentCarryoverMiddleware(AgentMiddleware):
             return adjuntar(resultado, caja)
 
 
+class SubagentStepsMiddleware(AgentMiddleware):
+    """Anota en el buzon cada llamada que el subagente hace por dentro.
+
+    **Se cablea en el subagente, no en el coordinador**, y por eso existe
+    aparte de :class:`SubagentCarryoverMiddleware`: la lista
+    ``middleware=[...]`` de ``create_deep_agent`` no baja a los subagentes --
+    deepagents monta cada uno con la de SU propia spec
+    (``deepagents/middleware/subagents.py``) -- asi que la unica forma de ver
+    lo que pasa ahi dentro es estar ahi dentro. Va en cada entrada de
+    ``src/agent/subagents/``.
+
+    Lo que se anota es el resumen filtrado por la lista blanca, no la llamada:
+    ver ``src/threads/activity.py``. Esto se **escribe** en el checkpoint, asi
+    que filtrar despues llegaria tarde.
+
+    Los dos hooks, sincrono y async. A diferencia de los del coordinador, este
+    corre dentro de un subagente que puede invocarse de las dos formas, y un
+    middleware que solo implementa uno hace que LangChain lance
+    ``NotImplementedError`` en el otro modo -- para TODAS las llamadas, no solo
+    para esta.
+    """
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        resumen = resumen_publicable(request.tool_call)
+        resultado = handler(request)
+        _anotar_con_resultado(resumen, resultado)
+        return resultado
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        resumen = resumen_publicable(request.tool_call)
+        resultado = await handler(request)
+        _anotar_con_resultado(resumen, resultado)
+        return resultado
+
+
+def _anotar_con_resultado(resumen: dict[str, Any] | None, resultado: Any) -> None:
+    """Anota el paso una vez que se sabe como acabo.
+
+    Si la herramienta LANZA en vez de devolver un ``ToolMessage`` de error,
+    esto no llega a correr y el paso no se anota. No hace falta protegerlo: una
+    excepcion ahi tumba el turno, y un turno que no termina no escribe
+    checkpoint -- no hay historial que pudiera quedar incompleto.
+
+    Un resultado que no es un ``ToolMessage`` deja el ``ok`` en ``None``, que es
+    "nunca se supo" y no "fallo". El frontend ya distingue las dos cosas.
+    """
+    if resumen is None:
+        return
+    if isinstance(resultado, ToolMessage):
+        resumen["ok"] = resultado.status != "error"
+    anotar_paso(resumen)
+
+
 __all__ = [
     "CLAVE",
     "INFORME",
+    "PASOS",
     "SubagentCarryoverMiddleware",
+    "SubagentStepsMiddleware",
     "adjuntar",
     "anotar",
+    "anotar_paso",
     "buzon_abierto",
     "lo_recogido",
 ]

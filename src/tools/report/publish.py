@@ -35,7 +35,7 @@ import logging
 import time
 from typing import Any
 
-from src.agent.subagent_carryover import INFORME, anotar
+from src.agent.subagent_carryover import anotar
 from src.agent.subagent_events import avisar_informe_listo
 from src.backend import reports_client
 from src.backend.reports_client import BackendNoConfigurado, ErrorDelBackend
@@ -43,6 +43,7 @@ from src.config import get_settings
 from src.memory.profile_snapshot import leer_perfil_para_la_puerta
 from src.models.report import OrientationReport
 from src.reports.storage import InformeGuardado, upload_report
+from src.threads.activity import INFORME
 from src.tools.report.handler import build_orientation_report_handler
 
 logger = logging.getLogger(__name__)
