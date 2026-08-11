@@ -60,6 +60,7 @@ def report_to_pdf(informe: OrientationReport) -> bytes:
     """
     try:
         from weasyprint import CSS, HTML
+        from weasyprint.text.fonts import FontConfiguration
     except (ImportError, OSError) as exc:
         # `OSError` y no solo `ImportError`: cuando el paquete de Python esta
         # instalado pero la biblioteca nativa no, el fallo llega por ahi.
@@ -70,8 +71,27 @@ def report_to_pdf(informe: OrientationReport) -> bytes:
             f"PDF no. Causa: {exc}"
         ) from exc
 
+    # UNA sola `FontConfiguration` para los dos sitios, y no es opcional pese a
+    # que ambos parametros admitan `None`. Sin ella el informe salia con la
+    # serif de reemplazo de Debian en lugar de Fraunces.
+    #
+    # El motivo esta en `weasyprint/css/__init__.py`: la regla `@font-face` se
+    # procesa al CONSTRUIR el CSS, y ahi hay un `if font_config is not None:`
+    # sin `else`. Con `None` la regla se descarta **en silencio** -- ni WARNING
+    # ni excepcion. Y `write_pdf()` se fabrica una por su cuenta cuando no se le
+    # pasa ninguna (`document.py::_render`), pero esa nace despues de que el CSS
+    # ya se haya parseado, asi que jamas se entera de Fraunces.
+    #
+    # Por eso el fallo no se veia por ningun lado: el PDF salia entero, valido,
+    # con el mismo texto y el mismo numero de paginas. Solo cambiaba la letra.
+    # Se caza mirando que fuentes quedaron incrustadas -- ver el test de
+    # `tests/reports/pdf.py` que hace justo eso.
+    fuentes = FontConfiguration()
     documento = HTML(string=report_to_html(informe))
-    pdf: bytes = documento.write_pdf(stylesheets=[CSS(filename=str(HOJA_DE_ESTILOS))])
+    pdf: bytes = documento.write_pdf(
+        stylesheets=[CSS(filename=str(HOJA_DE_ESTILOS), font_config=fuentes)],
+        font_config=fuentes,
+    )
 
     logger.info(
         "Informe renderizado a PDF",
