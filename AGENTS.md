@@ -1,4 +1,4 @@
-# AGENTS.md — Spark Match Deep Agent (`spark-match-08-deep-agent`)
+# AGENTS.md — Spark Match Deep Agent (`spark-match-07-deep-agent`)
 
 > Working agreement para agentes de IA (OpenCode, Claude Code, Copilot) y humanos que contribuyen a este repositorio.
 > **Lectura obligatoria antes de cada PR.** Fuente de verdad local, no duplicada en `docs/`.
@@ -8,7 +8,7 @@
 
 ## 1. Propósito y estado del repositorio
 
-`spark-match-08-deep-agent` es el **agente conversacional de orientación vocacional** (modelo RIASEC) de la plataforma Spark Match. Construido con `deepagents` (LangGraph) sobre AWS Bedrock, expone un endpoint AG-UI por SSE que consume el frontend Angular (`spark-match-04-frontend`).
+`spark-match-07-deep-agent` es el **agente conversacional de orientación vocacional** (modelo RIASEC) de la plataforma Spark Match. Construido con `deepagents` (LangGraph) sobre AWS Bedrock, expone un endpoint AG-UI por SSE que consume el frontend Angular (`spark-match-04-frontend`).
 
 Es un **Trabajo de Fin de Programa (TFP)** — UNI, II Programa de Especialización en IA Generativa y MLOps. Esa condición manda dos requisitos no negociables:
 
@@ -96,7 +96,7 @@ Ejemplos inválidos: `feature/memory`, `fix-bug`, `ahincho/test`, `feat/impl-2-m
 
 ```bash
 gh pr create \
-  --repo spark-match/spark-match-08-deep-agent \
+  --repo spark-match/spark-match-07-deep-agent \
   --base dev \
   --head feat/sprint-6-persistence-layer \
   --title "feat(persistence): add checkpointer and store factory" \
@@ -133,13 +133,13 @@ Sprint N — tarea N.X del ROADMAP-2026-08.md
 Esperar a que **todos** los checks pasen. Consultar:
 
 ```bash
-gh pr checks <num> --repo spark-match/spark-match-08-deep-agent --watch
+gh pr checks <num> --repo spark-match/spark-match-07-deep-agent --watch
 ```
 
 Si un check está en rojo, **se arregla el problema raíz**. No se bypasea (ver §12).
 
 ```bash
-gh pr merge <num> --repo spark-match/spark-match-08-deep-agent \
+gh pr merge <num> --repo spark-match/spark-match-07-deep-agent \
   --squash --delete-branch
 ```
 
@@ -158,11 +158,11 @@ Se hace con un PR dedicado, **no** después de cada merge a `dev`.
 
 ```bash
 gh pr create \
-  --repo spark-match/spark-match-08-deep-agent \
+  --repo spark-match/spark-match-07-deep-agent \
   --base main --head dev \
   --title "chore(sync): dev -> main (sprint 6 - persistencia)" \
   --body-file .git/sync-body.md
-gh pr merge <num> --repo spark-match/spark-match-08-deep-agent --squash
+gh pr merge <num> --repo spark-match/spark-match-07-deep-agent --squash
 ```
 
 **Cuándo promover** (criterios, en orden de precedencia):
@@ -241,7 +241,7 @@ El scope es **opcional**. Los commits de sync (`chore(sync): dev -> main ...`) s
 Con squash merge, GitHub usa el **título del PR** como subject del commit final, **no** el mensaje local. Si corriges el subject con `--amend`, actualiza también el PR:
 
 ```bash
-gh pr edit <num> --repo spark-match/spark-match-08-deep-agent --title "<nuevo subject>"
+gh pr edit <num> --repo spark-match/spark-match-07-deep-agent --title "<nuevo subject>"
 ```
 
 Si el merge ya ocurrió con el subject malo: **fix forward** (un PR nuevo con commits válidos). No reescribir historia en ramas compartidas.
@@ -417,7 +417,7 @@ No asumas firmas. El repo tiene un `.venv` con las versiones exactas; introspecc
 - **`gh pr create --body "..."`**: rompe tildes y saltos de línea. Usar siempre `--body-file`.
 - **`gh api` con `?` en la URL**: el shell interpreta el `?`. Asignar a variable primero:
   ```powershell
-  $url = "/repos/spark-match/spark-match-08-deep-agent/actions/runs?event=pull_request"
+  $url = "/repos/spark-match/spark-match-07-deep-agent/actions/runs?event=pull_request"
   gh api "$url"
   ```
 - **No hay `&&`**: usar `cmd1; if ($?) { cmd2 }`.
@@ -519,7 +519,7 @@ Workflow obligatorio al encontrar una alerta:
 3. **CodeQL**: arreglar el código. Si es un falso positivo real, suprimir inline con justificación explícita.
 4. **Verificar** antes de mergear:
    ```powershell
-   $url = "/repos/spark-match/spark-match-08-deep-agent/code-scanning/alerts?state=open"
+   $url = "/repos/spark-match/spark-match-07-deep-agent/code-scanning/alerts?state=open"
    gh api "$url"
    ```
 5. **Documentar** la acción en el body del PR.
