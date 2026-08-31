@@ -11,18 +11,19 @@
 #
 # Paths criticos (governance): @spark-match/product-owners
 #
-# Convencion: explicit paths, no catch-all. Solo se listan paths que
-# existen en el repo (ver AGENTS.md seccion 13, item G3): si se crea
-# /decisions/, /onboarding/, /postmortems/, /CONTRIBUTING.md o /LICENSE
-# en el futuro, anadir su entrada aqui en el mismo PR que los introduce.
+# Convencion: explicit paths, no catch-all.
 
+/decisions/                                @spark-match/product-owners
+/onboarding/                               @spark-match/product-owners
+/postmortems/                              @spark-match/product-owners
 /README.md                                 @spark-match/ai-devs @spark-match/product-owners
+/CONTRIBUTING.md                           @spark-match/ai-devs @spark-match/product-owners
+/LICENSE                                   @spark-match/ai-devs @spark-match/product-owners
 /AGENTS.md                                 @spark-match/ai-devs @spark-match/product-owners
 /ROADMAP-2026-08.md                        @spark-match/ai-devs @spark-match/product-owners
 
 /.github/                                  @spark-match/ai-devs
 /data/                                     @spark-match/ai-devs
-/docs/                                     @spark-match/ai-devs
 /evals/                                    @spark-match/ai-devs
 /skills/                                   @spark-match/ai-devs
 /src/                                      @spark-match/ai-devs
@@ -30,7 +31,6 @@
 
 /.dockerignore                             @spark-match/ai-devs
 /.env.example                              @spark-match/ai-devs
-/.mcp.json                                 @spark-match/ai-devs
 /.python-version                           @spark-match/ai-devs
 /CHANGELOG.md                              @spark-match/ai-devs
 /IMPROVEMENTS.md                           @spark-match/ai-devs
