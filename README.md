@@ -37,7 +37,7 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 | API | FastAPI + SSE (AG-UI protocol) |
 | Protocolo frontend | AG-UI (`ag-ui-langgraph`) |
 | Memoria / Perfilado | `langmem` (extracción de perfil desde conversación, activo desde Sprint 6) |
-| Persistencia | Checkpointer + Store de LangGraph (`memory`/`sqlite` sin AWS, `postgres` pendiente — Sprint 6) |
+| Persistencia | Checkpointer + Store de LangGraph. Tres perfiles: `memory`, `sqlite` (ninguno toca AWS) y `postgres`, el de producción, que resuelve el DSN por SSM → Secrets Manager |
 | Web search | Tavily (primary) + DuckDuckGo (fallback) |
 | Package manager | `uv` |
 | Python | 3.14 |
@@ -82,6 +82,7 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 | `assessment` | Administra test RIASEC conversacional, infiere scores | `evaluate_riasec_profile` |
 | `matching` | Calcula afinidad y genera ranking Top-5 | `recommend_programs`, `calculate_affinity`, `search_careers`, `search_programs` |
 | `planning` | Genera planes de acción con recursos buscados en vivo | `search_careers`, `web_search` |
+| `report` | Arma y publica el informe de orientación (ADR-019) | `recommend_programs`, `publish_orientation_report` |
 
 Las tres herramientas de catálogo leen **una sola fuente**,
 `data/programs/programs.csv` (Ponte en Carrera, MINEDU, snapshot del
@@ -134,6 +135,7 @@ El servidor arranca en `http://localhost:8000`.
 | `GET` | `/threads` | Conversaciones del usuario autenticado, más reciente primero |
 | `GET` | `/threads/{id}/messages` | Historial de una conversación, para repoblar el chat al recargar |
 | `DELETE` | `/threads/{id}` | Borra la conversación: checkpoints, índice y registro de ownership |
+| `PUT` | `/profile/preferences` | Actualiza las preferencias del estudiante |
 | `GET` | `/health` | Health check con info del agente y modelo |
 
 Todas las rutas de `/threads` exigen el mismo JWT que `/ag-ui` y derivan el
