@@ -27,11 +27,47 @@ dependencies = [
     "pydantic-settings>=2.8.0",
     # HTTP client (for tools)
     "httpx>=0.28.0",
-    # Web search: Tavily (primary) + DuckDuckGo (fallback)
-    "tavily-python>=0.5.0",
+    # Web search: Tavily (primary) + DuckDuckGo (fallback). 0.7.26 is the
+    # first version exposing AsyncTavilyClient (Sprint 8, task 8.1).
+    "tavily-python>=0.7.26",
     "duckduckgo-search>=7.0.0",
     # YAML frontmatter for career catalog + prompts
     "pyyaml>=6.0.3",
+    "langgraph-checkpoint-sqlite>=3.1.1",
+    # Perfil `postgres`: checkpointer + store sobre RDS. psycopg trae el
+    # driver y el pool que usa AsyncPostgresSaver.from_conn_string; el extra
+    # [binary] evita compilar libpq en la imagen ARM64 del Dockerfile.
+    "langgraph-checkpoint-postgres>=3.0",
+    "psycopg[binary,pool]>=3.2",
+    "pyjwt[crypto]>=2.10",
+    "cachetools>=5.5",
+    "boto3>=1.40",
+    "slowapi>=0.1.9",
+    # MCP server SDK (Sprint 8, task 8.5) -- exposes the 4 project tools
+    # over the Model Context Protocol via MCPServer (mcp.server.mcpserver).
+    # Note: the roadmap names "langchain-mcp-adapters" for this task, but
+    # that package is a *client* (consumes external MCP servers into
+    # LangChain) -- it has no server-side API. "mcp" is the underlying
+    # protocol SDK that even langchain-mcp-adapters depends on for its own
+    # example servers; it's the correct (and minimal) dependency for the
+    # expose-only scope this task was narrowed to. >=2.0 because 2.0
+    # renamed the 1.x FastMCP class to MCPServer and moved its module
+    # (mcp.server.fastmcp -> mcp.server.mcpserver) -- confirmed by
+    # installing and introspecting the real package, not assumed from
+    # (outdated) docs.
+    "mcp>=2.0",
+    # Renderizado del informe (ADR-019, D11): Markdown -> HTML -> PDF.
+    #
+    # `weasyprint` NO es Python puro: carga pango, cairo y gdk-pixbuf por FFI,
+    # asi que la imagen de runtime tiene que traerlas (ver Dockerfile). Por eso
+    # `src/reports/pdf.py` la importa dentro de la funcion y no arriba -- una
+    # imagen a la que le falte una de esas bibliotecas tiene que perder el PDF,
+    # no dejar de arrancar.
+    #
+    # Va aqui y no en el backend porque Lambda no tiene esas bibliotecas; el
+    # agente corre en Fargate, que si.
+    "weasyprint>=63.0",
+    "markdown-it-py>=3.0",
 ]
 
 [build-system]
@@ -98,9 +134,16 @@ module = [
     "ag_ui_langgraph",
     "ag_ui_langgraph.*",
     "tavily",
+    "tavily.*",
     "langmem",
     "deepagents",
     "deepagents.*",
+    "slowapi",
+    "slowapi.*",
+    # WeasyPrint no publica `py.typed`. Solo se tocan dos simbolos suyos
+    # (`HTML` y `CSS`) y en un unico fichero, `src/reports/pdf.py`.
+    "weasyprint",
+    "weasyprint.*",
 ]
 ignore_missing_imports = true
 
@@ -112,4 +155,10 @@ dev = [
     "ruff>=0.9.0",
     "mypy>=1.15.0",
     "types-pyyaml>=6.0.12.20260518",
+    "types-cachetools>=5.5",
+    "boto3-stubs[secretsmanager,ssm]>=1.40",
+    # Solo para leer de vuelta el PDF que genera WeasyPrint y comprobar que el
+    # texto y las cifras sobrevivieron a las tres conversiones (ADR-019, D11).
+    # No entra en runtime: el agente escribe PDF, no los lee.
+    "pypdf>=5.1",
 ]

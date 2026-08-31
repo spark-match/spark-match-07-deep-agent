@@ -1,0 +1,180 @@
+name: deploy
+
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (dev or production)'
+        type: choice
+        required: true
+        default: 'dev'
+        options:
+          - dev
+          - production
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || github.ref_name }}
+  cancel-in-progress: false
+
+# El GITHUB_TOKEN del caller es el techo de lo que el reusable puede pedir.
+# `reusable-container-deploy-ecr.yml` declara `pull-requests: write` para su
+# step `notify-deploy-failure`; sin concederlo aca, GitHub rechaza el run
+# entero antes de arrancar (startup_failure, sin jobs ni logs).
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  # El deploy son DOS pasos, no uno. `reusable-container-deploy-ecr.yml`
+  # publica la imagen en ECR y ahi se queda: el servicio ECS sigue
+  # corriendo la anterior. Ponerla delante del trafico es trabajo de
+  # `reusable-ecs-deploy.yml`, que registra una revision nueva de la task
+  # definition y rota el servicio.
+  #
+  # Hasta ahora este workflow solo hacia el primer paso, asi que cada push
+  # a dev "desplegaba" una imagen que nadie ejecutaba hasta que alguien
+  # entraba a mano a lanzar `aws ecs update-service --force-new-deployment`.
+  # El segundo paso no estaba cableado porque no se PODIA: la receta de ECR
+  # no exponia outputs, y la de ECS pide `image-uri` como input requerido.
+  # spark-match-01-devops#317 abrio ese output.
+  #
+  # La URI viene pinneada por digest, no por tag: el job de deploy resuelve
+  # la referencia en SU momento de ejecucion, asi que con `:latest` podria
+  # aterrizar en una imagen distinta de la que este run construyo.
+  #
+  # Nota: un job que llama un reusable solo admite name/uses/with/secrets/
+  # needs/if/permissions. El gate de GH Environment lo enlaza el propio
+  # reusable via inputs.environment-name.
+  #
+  # Las vars van con sufijo _DEV/_PROD y son repo-level, no environment-level:
+  # una var de scope environment NO se resuelve en el `with:` de una llamada a
+  # reusable, porque el environment se enlaza dentro del workflow llamado, no
+  # aca. Con `vars.ECR_REPOSITORY` (environment-level) el input llegaba vacio y
+  # el reusable moria en `Input validation failed: ecr-repository: required`.
+  # spark-match-04-frontend ya documenta y aplica este mismo patron.
+  deploy-dev:
+    name: deploy (dev)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
+    with:
+      environment-name: dev
+      aws-region: us-east-1
+      ecr-repository: ${{ vars.ECR_REPOSITORY_DEV }}
+      dockerfile-path: Dockerfile
+      platforms: linux/arm64
+      image-tags-input: 'latest,__GITHUB_SHA_SHORT__'
+      provenance: true
+      sbom: true
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
+
+  # `task-definition-family` no estaba puesto y por eso una variable de entorno
+  # anadida desde Terraform NUNCA llegaba al contenedor.
+  #
+  # El default del reusable ("") significa "la revision que el servicio corre
+  # ahora mismo", y esa nunca es la de Terraform: `aws_ecs_service` declara
+  # `ignore_changes = [task_definition]` -- tiene que hacerlo, o cada apply
+  # haria rollback a la imagen que el pipeline puso -- asi que Terraform
+  # registra una revision nueva y el servicio se queda apuntando a la del
+  # pipeline. Basar el rollout en la del servicio perpetua esa rama: los
+  # cambios de infraestructura se registran y nadie los ejecuta jamas.
+  #
+  # Con la familia puesta, AWS resuelve su ULTIMA revision activa. En un push
+  # normal esa es la del pipeline anterior y el comportamiento es identico;
+  # despues de un apply es la de Terraform, y entonces la imagen de este run se
+  # pinta encima. En los dos casos sale lo correcto.
+  #
+  # La familia coincide con el nombre del servicio porque `modules/agent-service`
+  # usa `local.name_prefix` para las dos cosas; no es casualidad, pero conviene
+  # saber que si eso cambiara habria que separar la variable.
+  roll-dev:
+    name: roll ecs (dev)
+    needs: deploy-dev
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-ecs-deploy.yml@main
+    with:
+      environment-name: dev
+      aws-region: us-east-1
+      cluster-name: ${{ vars.ECS_CLUSTER_DEV }}
+      service-name: ${{ vars.ECS_SERVICE_DEV }}
+      task-definition-family: ${{ vars.ECS_SERVICE_DEV }}
+      container-name: ${{ vars.ECS_CONTAINER_DEV }}
+      image-uri: ${{ needs.deploy-dev.outputs.image-uri }}
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
+
+  deploy-production:
+    name: deploy (production)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
+    with:
+      environment-name: production
+      aws-region: us-east-1
+      ecr-repository: ${{ vars.ECR_REPOSITORY_PROD }}
+      dockerfile-path: Dockerfile
+      platforms: linux/arm64
+      image-tags-input: 'latest,__GITHUB_SHA_SHORT__,__GITHUB_REF_NAME__'
+      provenance: true
+      sbom: true
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD }}
+
+  roll-production:
+    name: roll ecs (production)
+    needs: deploy-production
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-ecs-deploy.yml@main
+    with:
+      environment-name: production
+      aws-region: us-east-1
+      cluster-name: ${{ vars.ECS_CLUSTER_PROD }}
+      service-name: ${{ vars.ECS_SERVICE_PROD }}
+      # Ver el comentario largo de `roll-dev`.
+      task-definition-family: ${{ vars.ECS_SERVICE_PROD }}
+      container-name: ${{ vars.ECS_CONTAINER_PROD }}
+      image-uri: ${{ needs.deploy-production.outputs.image-uri }}
+      deploy-role-arn: ${{ vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD }}
+
+  deploy-manual:
+    name: deploy (manual - ${{ github.event.inputs.environment }})
+    if: github.event_name == 'workflow_dispatch'
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-container-deploy-ecr.yml@main
+    with:
+      environment-name: ${{ github.event.inputs.environment }}
+      aws-region: us-east-1
+      ecr-repository: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.ECR_REPOSITORY_PROD
+        || vars.ECR_REPOSITORY_DEV }}
+      dockerfile-path: Dockerfile
+      platforms: linux/arm64
+      image-tags-input: 'latest,__GITHUB_SHA_SHORT__'
+      provenance: true
+      sbom: true
+      deploy-role-arn: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD
+        || vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}
+
+  roll-manual:
+    name: roll ecs (manual - ${{ github.event.inputs.environment }})
+    needs: deploy-manual
+    uses: spark-match/spark-match-01-devops/.github/workflows/reusable-ecs-deploy.yml@main
+    with:
+      environment-name: ${{ github.event.inputs.environment }}
+      aws-region: us-east-1
+      cluster-name: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.ECS_CLUSTER_PROD
+        || vars.ECS_CLUSTER_DEV }}
+      service-name: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.ECS_SERVICE_PROD
+        || vars.ECS_SERVICE_DEV }}
+      container-name: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.ECS_CONTAINER_PROD
+        || vars.ECS_CONTAINER_DEV }}
+      image-uri: ${{ needs.deploy-manual.outputs.image-uri }}
+      deploy-role-arn: >-
+        ${{ github.event.inputs.environment == 'production'
+        && vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_PROD
+        || vars.AWS_BEDROCK_AGENTCORE_DEPLOY_ROLE_ARN_DEV }}

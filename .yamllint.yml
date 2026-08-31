@@ -1,0 +1,34 @@
+---
+# yamllint configuration for spark-match-08-deep-agent
+# Docs: https://yamllint.readthedocs.io/
+# Mirrors spark-match-01-devops/.yamllint.yml with repo-specific ignores
+# (same approach as spark-match-04-frontend).
+
+extends: default
+
+ignore: |
+  .git/
+  .venv/
+  .pytest_cache/
+  .ruff_cache/
+  .mypy_cache/
+  htmlcov/
+  spark-match-01-devops/
+
+rules:
+  # Allow longer lines (reusable workflow paths + URLs exceed 80 chars)
+  line-length:
+    max: 160
+
+  # Allow multiple documents in one file (--- separators)
+  document-start: disable
+
+  # Allow truthy values like 'on' (used in workflows) and 'yes'
+  truthy:
+    allowed-values: ['true', 'false', 'on', 'off']
+    check-keys: false
+
+  # Allow comments to be indented differently from parent
+  comments:
+    min-spaces-from-content: 1
+    require-starting-space: true

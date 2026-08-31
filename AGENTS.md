@@ -15,18 +15,18 @@ Es un **Trabajo de Fin de Programa (TFP)** — UNI, II Programa de Especializaci
 1. El evaluador debe poder correr el agente **en local sin cuenta AWS** (`uv sync && uv run python -m src`).
 2. La portabilidad (vendor-neutral) es un criterio de diseño, no un accidente. Ver `../orion/AWS-DEEPAGENT-VS-AWS-RUNTIME-VS-AWS-HARNESS.md` §8.1.
 
-### 1.1 Estado real (verificado 2026-08-03)
+### 1.1 Estado real (verificado 2026-08-04)
 
 El plan de finalización vive en **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** (Sprints 5 → 11). Lo que hay que saber antes de tocar código:
 
 | Capacidad | Estado |
 |---|---|
-| Memoria por sesión y entre sesiones | **No existe.** Sin `checkpointer=`, sin `store=`, sin `backend=`. Sprint 6. |
-| Autenticación / autorización | **No existe.** `POST /ag-ui` es público. Sprint 7. |
-| `langmem` | Dependencia fantasma. `create_profile_manager()` no se invoca nunca. |
-| `skills/` | Nunca se carga (`skills=` no se pasa a `create_deep_agent`). |
-| Guardrail de turnos | **Roto.** `MaxTurnsMiddleware` usa `goto`; LangChain 1.x espera `jump_to`. |
-| Modelo por defecto | **Fuera del allowlist IAM** de `spark-match-02-infrastructure`. |
+| Memoria por sesión y entre sesiones | **Cerrado (Sprint 6).** `checkpointer=`/`store=`/`backend=` cableados en `create_spark_agent()` y en el lifespan de `app.py`. `user_id` real desde el JWT desde Sprint 7 (antes placeholder fijo) — ver fila de Autenticación. |
+| Autenticación / autorización | **Cerrado (Sprint 7).** `POST /ag-ui` exige JWT válido (`src/auth/`); `thread_id` derivado + registro de propiedad (403 cruzado); `runtime.context.user_id/role/email` disponibles en todo middleware/tool vía `context_schema=AgentContext`. Endurecimiento (7.E) cerrado: CORS validator, cabeceras de seguridad, rate limiting (`slowapi`, 5 req/min por `user_id`) y budget diario por usuario en el store. Ver `docs/auth.md`. |
+| `langmem` | **Activo.** `src/memory/profile_manager.py` usa `create_memory_store_manager` + `ReflectionExecutor`; `src/agent/memory_middleware.py` hidrata/persiste el perfil. |
+| `skills/` | **Activo (Sprint 8, tarea 8.3).** `skills=[SKILLS_ROOT]` pasado a `create_deep_agent()`; `SkillsMiddleware` lee `SKILL.md` vía un `FilesystemBackend` acotado a `skills/` (no la raíz del repo). `skills/vocational_advisor/SKILL.md` ya no es peso muerto. |
+| Guardrail de turnos | **Corregido (Sprint 5, B1).** `MaxTurnsMiddleware` usa `jump_to` (`@hook_config(can_jump_to=["end"])`), no `goto`. |
+| Modelo por defecto | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` — dentro del allowlist IAM de `spark-match-02-infrastructure`. |
 | Contenedor | No hay `Dockerfile` (solo un `.dockerignore` huérfano). |
 
 > **Regla**: `README.md` e `IMPROVEMENTS.md` están desactualizados y describen features que no existen. La §2 del `ROADMAP-2026-08.md` es la única fuente de verdad verificada. No cites el README como evidencia.
@@ -342,7 +342,13 @@ Heredada de `spark-match-03-backend/AGENTS.md` §12.2. Antes de escribir cualqui
    - **(c) Receta nueva**: solo si (a) y (b) no aplican.
 4. **Al proponer creación, documentar**: filename `reusable-<kebab>.yml`, inputs con defaults, bloque `permissions:` mínimo, binding de GH Environment si hay secretos, nivel de riesgo y compatibilidad hacia atrás.
 
-> **Estado actual crítico**: `spark-match-01-devops` **borró el CI de Python el 2026-08-02** (commits `7ea5a88` y `c007ce6`). No existen `reusable-python-ci.yml`, `reusable-container-deploy-ecr.yml`, `reusable-sonar-python.yml` ni `reusable-trivy.yml`. Este repo sería el primer consumidor Python del org. Las solicitudes formales R1–R6 están en `ROADMAP-2026-08.md` §6.1. **No dupliques esos pipelines aquí**: se piden upstream.
+> **Estado del catálogo (verificado 2026-08-06)**: los cuatro reusables de Python **existen** y este repo los consume: `reusable-python-ci.yml`, `reusable-container-deploy-ecr.yml`, `reusable-sonar-python.yml` y `reusable-trivy.yml`. Se restauraron el 2026-08-04 tras el borrado del 2026-08-02.
+>
+> Este párrafo decía lo contrario hasta hoy —afirmaba que los cuatro no existían y que había que pedirlos upstream— mucho después de que se entregaran. Un agente que lo leyera no habría cableado nada. De ahí que ahora lleve fecha de verificación.
+>
+> De las seis solicitudes R1–R6 de `ROADMAP-2026-08.md` §6.1, **solo R5 sigue abierta** (poblar `statusChecks` en el manifiesto de governance). R4 quedó parcialmente cerrada: trivy escanea el filesystem, pero escanear la imagen de contenedor sigue sin ser posible.
+>
+> **No dupliques estos pipelines aquí**: se consumen del catálogo.
 
 ### 7.3 Secretos y OIDC
 
@@ -446,16 +452,57 @@ El backlog canónico es **[`ROADMAP-2026-08.md`](ROADMAP-2026-08.md)** §5. Resu
 | Sprint | Tema | Estado | Bloquea a |
 |---|---|---|---|
 | **5** | Correcciones críticas (B1–B10) + deuda técnica | ✅ Cerrado 2026-08-04 | 6, 7 |
-| **6** | Memoria persistente: checkpointer + store + langmem | Pendiente | 7, 9 |
-| **7** | Auth JWT + roles + aislamiento por usuario | Pendiente | 10 |
-| **8** | Tools async, skills, MCP, intent router | Pendiente | 9 |
-| **9** | Guardrails + evals ampliados | Pendiente | 11 |
+| **6** | Memoria persistente: checkpointer + store + langmem | ✅ Cerrado 2026-08-04 | 7, 9 |
+| **7** | Auth JWT + roles + aislamiento por usuario | ✅ Cerrado 2026-08-04 | 10 |
+| **8** | Tools async, skills, MCP, intent router | ✅ Cerrado 2026-08-04 | 9 |
+| **9** | Guardrails + evals ampliados | ✅ Cerrado 2026-08-04 | 10, 11 |
 | **10** | Contenedor + CI/CD + infraestructura | Pendiente | 11 |
 | **11** | Deploy, observabilidad, cierre TFP | Pendiente | — |
 
-> **Sprint 5 cerrado.** Los 10 bugs B1–B10 tienen test de regresión (PRs #25,
-> #26, #27 a `dev`). Sigue el Sprint 6 (memoria persistente) o el Sprint 7
-> (auth JWT) — ambos desbloqueados.
+> **Sprint 9 cerrado.** 10 PRs individuales (#43, #44, #45, #46, #47,
+> #48, #49, #50, #51, #52). 352 tests passing, 30/30 evals `--mode
+> mock`, gate completo verde. DoD cumplido: >=30 casos en
+> `evals/dataset.jsonl` con >=5 memoria y >=4 guardrails; judge
+> multi-dimension con umbral 0.7; mock mode detecta regresiones
+> inyectadas; `docs/benchmarks.md` con comparativa Deep Agents vs POC
+> v1/v2; 5 prompts de inyeccion bloqueados con 0 falsos positivos en
+> los 25 casos legitimos. Validacion empirica de la hipotesis
+> RubricMiddleware (subir el JudgeScore) queda pendiente para Sprint 11
+> cuando haya live mode + observabilidad -- ver
+> `docs/rubric-middleware-evaluation.md` SS6.
+
+> **Sprint 6 cerrado.** Checkpointer + store + composite backend +
+> `MemoryMiddleware` (seed de `/memories/AGENTS.md`) + langmem
+> (`ProfileHydrationMiddleware`/`ProfilePersistMiddleware`) cableados en
+> `create_spark_agent()` y en el lifespan de `app.py` (PRs #31–#33 a `dev`).
+> El particionado por `user_id` existe estructuralmente en todos los
+> namespaces pero usa un placeholder fijo (`src/agent/user_context.py`)
+> hasta que el Sprint 7 provea el real vía JWT — ver AGENTS.md §1.1. Sigue
+> el Sprint 7 (auth JWT), que además reemplaza ese placeholder por el
+> `user_id` real.
+>
+> **Sprint 7 cerrado.** JWT validado (`src/auth/`), `thread_id` derivado +
+> registro de propiedad (7.B), `context_schema=AgentContext` cablea
+> `runtime.context.user_id/role/email` en todo el grafo (7.C), modelo de
+> roles/capacidades (7.D). El `user_id` placeholder del Sprint 6 queda
+> reemplazado por el real en toda request autenticada. Endurecimiento
+> (7.E) cerrado en un PR aparte: CORS validator (7.E.1), cabeceras de
+> seguridad (7.E.2), rate limiting por `user_id` vía `slowapi` (7.E.3), y
+> presupuesto diario por usuario en el store (7.E.4, distinto y
+> complementario al cupo de `web_search` por turno de `src/budget.py`,
+> que sigue en proceso hasta la migración async de Sprint 8) — ver
+> `docs/auth.md`.
+>
+> **Sprint 8 cerrado.** `web_search` migrado a async (`AsyncTavilyClient` +
+> `asyncio.to_thread` para DDG, 8.1) con errores tipados (401 no cae a DDG,
+> 8.2); `SkillsMiddleware` activado sobre un `FilesystemBackend` acotado a
+> `skills/` (nunca la raíz del repo, 8.3); `IntentRouterMiddleware` enruta
+> Haiku/Sonnet con heurística pura, 31.6% de cobertura medida contra
+> `evals/dataset.jsonl` (8.4); servidor MCP en `src/mcp/` exponiendo las 4
+> tools (solo exposición, `mcp` — no `langchain-mcp-adapters`, que es
+> cliente — ver `docs/mcp.md`, 8.5); `max_tokens` configurable en ambos
+> modelos (8.6); catálogo de carreras 10 → 20 (8.7). 7 PRs individuales
+> (#36–#42), cada uno con su propio ciclo `branch → dev`.
 
 `IMPROVEMENTS.md` documenta los Sprints 1–4, ya cerrados. Es histórico: **no lo uses como backlog**.
 
@@ -511,19 +558,23 @@ Lección aprendida en `spark-match-02-infrastructure` (PR #65): se dismissaron 3
 
 ## 13. Deuda de gobernanza conocida (pendiente de arreglar)
 
-Estado verificado al 2026-08-04. Estos ítems se cierran en el Sprint 10 (§10.C del roadmap):
+Estado verificado al 2026-08-04. G4, G6 y G8 siguen abiertos y se cierran en el
+Sprint 10 (§10.C del roadmap); requieren CI real / pipelines que aún no existen
+(ver `../spark-match-01-devops/AGENTS.md` §7.2 sobre las recetas Python borradas
+el 2026-08-02). El resto se resolvió sin depender de CI:
 
 | # | Problema | Detalle |
 |---|---|---|
 | G1 | ~~`CODEOWNERS` usa catch-all `*`~~ | **Resuelto.** `main` migró a paths explícitos el 2026-07-26 (`1b08968` + `6bc0c10`); `dev` recuperó esa versión en el PR que introdujo este archivo. |
-| G2 | **`pull_request_template.md` contradice `CODEOWNERS`** | El template dice que solo `@spark-match/product-owners` puede aprobar y que `ai-devs` no puede. `CODEOWNERS` y el ruleset del org (`reviewerTeam: ai-devs`) dicen lo contrario. **El template está mal.** |
-| G3 | **`CODEOWNERS` referencia paths inexistentes** | `/decisions/`, `/onboarding/`, `/postmortems/`, `/CONTRIBUTING.md`, `/LICENSE` no existen en el repo. O se crean o se quitan del fichero. |
+| G2 | ~~`pull_request_template.md` contradice `CODEOWNERS`~~ | **Resuelto.** El template decía que solo `@spark-match/product-owners` puede aprobar y que `ai-devs` no puede; se corrigió para reflejar el ruleset real (`reviewerTeam: ai-devs`, `product-owners` co-owner solo en paths de gobernanza). |
+| G3 | ~~`CODEOWNERS` referencia paths inexistentes~~ | **Resuelto.** `/decisions/`, `/onboarding/`, `/postmortems/`, `/CONTRIBUTING.md`, `/LICENSE` no existen en el repo; se quitaron las entradas fantasma en vez de crear directorios vacíos. Si se crean en el futuro, añadir su entrada en el mismo PR. |
 | G4 | **`statusChecks: []`** | La entrada de este repo en `governance/repository-governance.json` no exige ningún check. Poblarla tras crear los pipelines (R1–R3 del roadmap). |
-| G5 | **Sin `.commitlintrc.json`** | No hay enforcer de Conventional Commits ni local ni en CI. |
-| G6 | **Sin release-please** | `pyproject.toml` dice `0.1.0`, `CHANGELOG.md` declara `0.3.0` released (bug B10). |
-| G7 | **Sin `dependabot.yml`** | Ni `uv`/`pip`, ni `github-actions`, ni `docker`. |
-| G8 | **Sin proyecto SonarCloud** | Verificado: la búsqueda de proyectos `spark-match` no devuelve este repo. |
-| G9 | **`main` y `dev` divergieron en contenido** | Ver §13.1. Es la deuda más urgente: bloquea cualquier sync limpio. |
+| G5 | ~~Sin `.commitlintrc.json`~~ | **Resuelto.** Config añadida con el type-enum y scope-enum de §4 de este documento. El enforcer en CI (`reusable-commitlint`) llega con el Sprint 10. |
+| G6 | **Sin release-please** | `pyproject.toml` dice `0.3.0` (ya corregido, bug B10 del Sprint 5), `CHANGELOG.md` declara `0.3.0` released. Configurar `release-please` es cosmético sin el CI que lo dispare; se hace junto al Sprint 10. |
+| G7 | ~~Sin `dependabot.yml`~~ | **Resuelto.** Ecosistemas `uv` y `github-actions` añadidos. El ecosistema `docker` se añade en el Sprint 10 cuando exista un `Dockerfile` real. |
+| G8 | **Sin proyecto SonarCloud** | Verificado de nuevo el 2026-08-04: la búsqueda de proyectos `spark-match` sigue sin devolver este repo. SonarCloud auto-provisiona el proyecto en el primer análisis real vía CI, o requiere alta manual en la UI; ninguna de las dos vías es posible sin el pipeline del Sprint 10. |
+| G9 | ~~`main` y `dev` divergieron en contenido~~ | **Resuelto** el 2026-08-04 (ver §13.1 histórico, PR #24). |
+| G10 | **`main`/`dev` sin ancestría git real** | Descubierto el 2026-08-04 al intentar sincronizar el cierre del Sprint 5 (PR #29). Ver §13.2. |
 
 Al añadir un path nuevo de primer nivel, **agrega su entrada en `CODEOWNERS` en el mismo PR**.
 
@@ -557,6 +608,50 @@ En Python un módulo y un paquete con el mismo nombre no pueden coexistir sin am
 **Consecuencia operativa**: el primer sync `dev` → `main` posterior a esta nota borrará esos 8 ficheros. Es el comportamiento deseado. Antes de lanzarlo hay que confirmar que ningún commit exclusivo de `main` se pierda: revisar `git log origin/dev..origin/main` y portar a `dev` lo que sea legítimo.
 
 **Lección**: esta divergencia es exactamente lo que previene §3. Ningún commit entra a `main` si no pasó antes por `dev`.
+
+### 13.2 `main`/`dev` sin ancestría git real (detectado 2026-08-04, resuelto el mismo día)
+
+Al intentar el sync `dev` → `main` de cierre del Sprint 5 (PR #29), el PR quedó
+`CONFLICTING` con `add/add` en casi todos los archivos tocados desde el
+Sprint 4, pese a que `git diff --stat origin/main origin/dev` mostraba un
+diff limpio y puramente aditivo.
+
+**Causa raíz**: todo el historial de syncs de este repo (incluida la
+reconciliación de §13.1 vía PR #24) usó squash o `commit-tree` con un solo
+padre — ninguno de los dos crea ancestría git real. Git solo encontraba
+como ancestro común un commit anterior al refactor del Sprint 4, así que
+cualquier archivo creado después de ese punto (prácticamente todo el
+proyecto) aparecía como "añadido de forma independiente en ambos lados" en
+el merge de 3 vías, sin importar que el contenido fuera idéntico.
+
+**Fix aplicado**: se construyó un commit de merge real (2 padres: el tip
+anterior de `main` + el tip de `dev`) con `git commit-tree`, y se hizo push
+directo a `main` bajo la "dual-disable dance" documentada en
+`spark-match-01-devops/CONTRIBUTING.md` (flip temporal de
+`bypass_mode` del ruleset a `always` + `enforce_admins` a `false`, ventana
+de ~5 segundos, ambos restaurados de inmediato). Ver el comentario de
+cierre del PR #29 y el mensaje del commit `82bf13b` para el detalle
+completo.
+
+**Verificación post-fix**:
+
+```powershell
+git diff --stat origin/main origin/dev        # vacío
+git merge-base origin/main origin/dev          # == tip de origin/dev
+git show -s --format="parents=%P" origin/main  # 2 padres reales
+```
+
+Los 3 checks confirmaron ancestría real establecida por primera vez entre
+`main` y `dev`. Mientras se mantenga la regla de nunca commitear directo a
+`main` (§3), los futuros syncs `dev` → `main` —incluso vía squash normal—
+deberían computar un merge-base reciente y relevante en vez de saltar al
+ancestro antiguo previo al Sprint 4.
+
+**Lección**: un sync recurrente basado en squash o `commit-tree` de un solo
+padre nunca establece ancestría real; solo iguala contenido. Si el repo
+necesita reconciliaciones repetidas, la ancestría de 2 padres (como en este
+fix) es la única solución durable, aunque requiera un bypass documentado
+una única vez.
 
 ---
 

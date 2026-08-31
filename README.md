@@ -36,7 +36,8 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 | Runtime | LangGraph |
 | API | FastAPI + SSE (AG-UI protocol) |
 | Protocolo frontend | AG-UI (`ag-ui-langgraph`) |
-| Memoria / Perfilado | `langmem` (extracción de perfil desde conversación) |
+| Memoria / Perfilado | `langmem` (extracción de perfil desde conversación, activo desde Sprint 6) |
+| Persistencia | Checkpointer + Store de LangGraph (`memory`/`sqlite` sin AWS, `postgres` pendiente — Sprint 6) |
 | Web search | Tavily (primary) + DuckDuckGo (fallback) |
 | Package manager | `uv` |
 | Python | 3.14 |
@@ -61,8 +62,10 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 │                                                             │
 │  Tools:                                                     │
 │  ├── evaluate_riasec_profile  (scoring RIASEC)              │
-│  ├── search_careers           (catálogo local → pgvector)   │
+│  ├── search_careers           (554 carreras del MINEDU)     │
+│  ├── search_programs          (6208 carrera × institución)  │
 │  ├── calculate_affinity       (matching perfil ↔ carrera)   │
+│  ├── recommend_programs       (Top-N multicriterio)         │
 │  └── web_search               (Tavily + DDG fallback)       │
 │                                                             │
 │  Memory:                                                    │
@@ -77,8 +80,17 @@ El código de 3 letras más alto (ej. `RIA`) representa el "tipo Holland" del es
 | Subagente | Misión | Tools |
 |---|---|---|
 | `assessment` | Administra test RIASEC conversacional, infiere scores | `evaluate_riasec_profile` |
-| `matching` | Calcula afinidad y genera ranking Top-5 | `calculate_affinity`, `search_careers` |
-| `planning` | Genera planes de acción con recursos reales | `search_careers`, `web_search` |
+| `matching` | Calcula afinidad y genera ranking Top-5 | `recommend_programs`, `calculate_affinity`, `search_careers`, `search_programs` |
+| `planning` | Genera planes de acción con recursos buscados en vivo | `search_careers`, `web_search` |
+
+Las tres herramientas de catálogo leen **una sola fuente**,
+`data/programs/programs.csv` (Ponte en Carrera, MINEDU, snapshot del
+2026-06-13): `search_careers` la ve por carrera (554), `search_programs` por
+programa (6208 combinaciones carrera × institución) y `calculate_affinity`
+puntúa la vista por carrera. Hasta el 2026-08-09 hubo además un catálogo
+curado a mano en `data/careers/*.md` con veinte fichas y su propio RIASEC; se
+retiró para no mantener dos definiciones de «carrera» que iban a divergir —
+ver ADR-019 en `spark-match-03-backend`.
 
 ### Flujo del coordinador
 
@@ -119,7 +131,15 @@ El servidor arranca en `http://localhost:8000`.
 | Método | Path | Descripción |
 |--------|------|-------------|
 | `POST` | `/ag-ui` | Endpoint AG-UI (SSE streaming) — el frontend se conecta aquí |
+| `GET` | `/threads` | Conversaciones del usuario autenticado, más reciente primero |
+| `GET` | `/threads/{id}/messages` | Historial de una conversación, para repoblar el chat al recargar |
+| `DELETE` | `/threads/{id}` | Borra la conversación: checkpoints, índice y registro de ownership |
 | `GET` | `/health` | Health check con info del agente y modelo |
+
+Todas las rutas de `/threads` exigen el mismo JWT que `/ag-ui` y derivan el
+`thread_id` efectivo del `user_id` del token antes de verificar ownership:
+el `{id}` de la URL es el identificador **del cliente**, no una capacidad.
+Conocer el id de otro no da acceso a nada.
 
 ## Desarrollo
 
@@ -173,10 +193,11 @@ uv run mypy src/
 │   │   └── system.py            # System prompt del coordinador
 │   └── tools/
 │       ├── __init__.py
-│       ├── assessment.py        # evaluate_riasec_profile
-│       ├── catalog.py           # search_careers (in-memory MVP)
-│       ├── matching.py          # calculate_affinity
-│       └── web_search.py        # Tavily + DuckDuckGo fallback
+│       ├── assessment/          # evaluate_riasec_profile
+│       ├── catalog/             # search_careers (vista por carrera)
+│       ├── matching/            # calculate_affinity
+│       ├── programs/            # search_programs + loader del CSV
+│       └── web_search/          # Tavily + DuckDuckGo fallback
 ├── skills/
 │   └── vocational_advisor/
 │       └── SKILL.md             # Skill on-demand (conocimiento RIASEC)
@@ -241,8 +262,8 @@ Todas las variables usan el prefijo `SPARK_` y se leen desde `.env` (ver `.env.e
 | `SPARK_AGENT_NAME` | `spark-match-advisor` | Nombre del agente (visible en logs/traces) |
 | `SPARK_MAX_TURNS` | `50` | Máximo de turnos por sesión antes de cortar |
 | `SPARK_TAVILY_API_KEY` | — | API key de Tavily (opcional; sin ella usa DuckDuckGo) |
-| `SPARK_LANGSMITH_API_KEY` | — | API key de LangSmith (opcional; para observabilidad) |
-| `SPARK_LANGSMITH_PROJECT` | `spark-match-agent` | Nombre del proyecto en LangSmith |
+| `SPARK_LANGSMITH_API_KEY` | — | API key de LangSmith (opcional; sin ella no se manda nada) |
+| `SPARK_LANGSMITH_PROJECT` | `spark-match-agent` | Proyecto de LangSmith. Ponerlo siempre: la convención es uno por ambiente (`spark-match-agent-local`, `-dev`, `-prod`) y el default no la sigue |
 | `SPARK_LANGSMITH_TRACING` | `false` | Habilitar tracing en LangSmith (`true` \| `false`) |
 
 ## Troubleshooting
@@ -282,16 +303,38 @@ Esto activará:
 | **A2A** | 🔜 Futuro | Agent ↔ Agent (multi-agent cross-framework) |
 | **A2UI** | 🔜 Futuro | Agent → Frontend (generative UI components) |
 
+## Observabilidad con LangSmith
+
+Implementado. `src/observability/langsmith.py` empuja las settings `SPARK_LANGSMITH_*` a las variables `LANGSMITH_*` que `langchain-aws` y `deepagents` leen solos, y el lifespan de `src/api/app.py` lo llama al arrancar. No hay que instrumentar nada a mano: llega la latencia por subagente (`assessment`, `matching`, `planning`), los tokens por sesión y el input/output completo de cada tool.
+
+Para activarlo en local basta con poner en el `.env`:
+
+```bash
+SPARK_LANGSMITH_API_KEY=lsv2_...        # smith.langchain.com -> Settings -> API Keys
+SPARK_LANGSMITH_PROJECT=spark-match-agent-local
+SPARK_LANGSMITH_TRACING=true
+```
+
+Un proyecto por ambiente — `spark-match-agent-local`, `-dev`, `-prod` — para que las trazas del portátil no caigan donde las de dev. En ECS las pone Terraform a partir del secret de Secrets Manager; el procedimiento está en `docs/runbook-langsmith.md` de **spark-match-02-infrastructure**.
+
+Sin key el agente funciona igual: avisa por WARNING en el arranque y no manda nada.
+
+> Una traza lleva la conversación entera, incluido lo que escribe el estudiante. Es lo que la hace útil y también lo que conviene tener presente antes de dejarla encendida con usuarios reales.
+
+### Datasets y Experiments
+
+`make eval-langsmith` sube `evals/dataset.jsonl` (los mismos 29 casos que usa `make eval-test`) como Dataset de LangSmith y corre un Experiment: el agente real contra cada caso, evaluado por el mismo `SparkMatchJudge` que ya existía — nada del rubric se reimplementa, `evals/langsmith_experiment.py` sólo lo envuelve en la firma que espera `langsmith.evaluate()`. A diferencia de `evals.runner` (pass/fail en consola, sin memoria entre corridas), un Experiment queda en LangSmith y es comparable contra el siguiente: sirve para ver si un cambio de prompt subió o bajó `riasec_accuracy` sin adivinar.
+
+Reporta 5 feedback keys por caso — las 4 dimensiones del rubric más el score ponderado — así la tabla de Experiments de LangSmith se puede ordenar por `tone` o `safety` sola, no sólo por el promedio.
+
+```bash
+make eval-langsmith                 # las 29 completas
+uv run python -m evals.langsmith_experiment --limit 3   # smoke barato
+```
+
 ## Trabajos futuros
 
-- **Observabilidad con LangSmith**: integrar [LangSmith](https://www.langchain.com/langsmith) para tracing, monitoring y debugging de los subagentes y tools. Esto nos dará visibilidad sobre:
-  - Latencia por subagente (`assessment`, `matching`, `planning`)
-  - Tokens consumidos por sesión y por usuario
-  - Traces completos de las tool calls (input/output de `evaluate_riasec_profile`, `search_careers`, `calculate_affinity`, `web_search`)
-  - Detección de alucinaciones y fallos en el razonamiento
-  - Datasets de evaluación a partir de interacciones reales (para regression testing)
-  
-  La integración se hará mediante las variables de entorno `LANGSMITH_API_KEY`, `LANGSMITH_TRACING=true` y `LANGSMITH_PROJECT=spark-match-dev` (o `spark-match-prod`), aprovechando el soporte nativo de `langchain-aws` y `deepagents` con LangSmith.
+- **Evaluadores online**: correr `spark_match_rubric` como evaluador automático sobre una muestra del tráfico real de dev/prod (`langsmith evaluator upload --project`), no sólo sobre el dataset curado.
 
 ## Contexto académico
 
