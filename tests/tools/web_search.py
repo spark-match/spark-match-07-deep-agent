@@ -3,7 +3,15 @@
 These tests exercise the pure handler directly (no @tool decorator, no
 LLM dependency). Tavily/DuckDuckGo calls are monkeypatched at the module
 level — no real network access or API keys required.
+
+``web_search_handler`` is async (Sprint 8, task 8.1): ``_search_tavily``
+is awaited directly (its fakes below are ``async def``), while
+``_search_duckduckgo`` stays a plain sync fake since it's invoked through
+``asyncio.to_thread`` at the call site, not awaited directly.
 """
+
+import asyncio
+import time
 
 import pytest
 
@@ -28,29 +36,33 @@ def _ok_results(n: int = 2) -> list[dict[str, str]]:
     return [{"title": f"r{i}", "url": f"https://example.com/{i}", "content": "x"} for i in range(n)]
 
 
+async def _async_ok_results(*_a: object, n: int = 2) -> list[dict[str, str]]:
+    return _ok_results(n)
+
+
 class TestWebSearchHandlerValidation:
     """Input validation, independent of any provider."""
 
-    def test_empty_query_returns_error(self):
-        result = web_search_handler(query="")
+    async def test_empty_query_returns_error(self):
+        result = await web_search_handler(query="")
         assert result["status"] == "error"
         assert result["data"] is None
         assert "non-empty" in result["errors"][0]
 
-    def test_whitespace_only_query_returns_error(self):
-        result = web_search_handler(query="   ")
+    async def test_whitespace_only_query_returns_error(self):
+        result = await web_search_handler(query="   ")
         assert result["status"] == "error"
 
-    def test_invalid_max_results_falls_back_to_default(self, monkeypatch):
+    async def test_invalid_max_results_falls_back_to_default(self, monkeypatch):
         """max_results < 1 or non-int should not crash — falls back to 5."""
         captured = {}
 
-        def fake_tavily(query, max_results):
+        async def fake_tavily(query, max_results):
             captured["max_results"] = max_results
             return _ok_results()
 
         monkeypatch.setattr(web_search_module, "_search_tavily", fake_tavily)
-        result = web_search_handler(query="python", max_results=0)
+        result = await web_search_handler(query="python", max_results=0)
         assert result["status"] == "success"
         assert captured["max_results"] == 5
 
@@ -58,7 +70,7 @@ class TestWebSearchHandlerValidation:
 class TestWebSearchHandlerBudget:
     """Budget enforcement (B2/B3): cap<=0 is unlimited, no double increment."""
 
-    def test_budget_exhausted_refuses_call(self, monkeypatch):
+    async def test_budget_exhausted_refuses_call(self, monkeypatch):
         monkeypatch.setenv("SPARK_MAX_WEB_SEARCHES_PER_SESSION", "1")
         from src.config import get_settings
 
@@ -66,16 +78,17 @@ class TestWebSearchHandlerBudget:
         budget.increment_web_search()  # consume the only slot
 
         called = {"tavily": False}
-        monkeypatch.setattr(
-            web_search_module,
-            "_search_tavily",
-            lambda *a: called.__setitem__("tavily", True) or _ok_results(),
-        )
-        result = web_search_handler(query="python")
+
+        async def fake_tavily(*a):
+            called["tavily"] = True
+            return _ok_results()
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", fake_tavily)
+        result = await web_search_handler(query="python")
         assert result["status"] == "budget_exhausted"
         assert called["tavily"] is False  # refused before doing any work
 
-    def test_budget_zero_is_unlimited(self, monkeypatch):
+    async def test_budget_zero_is_unlimited(self, monkeypatch):
         """B2: a cap of 0 must mean unlimited, not 'always exhausted'."""
         monkeypatch.setenv("SPARK_MAX_WEB_SEARCHES_PER_SESSION", "0")
         from src.config import get_settings
@@ -86,60 +99,121 @@ class TestWebSearchHandlerBudget:
         for _ in range(50):
             budget.increment_web_search()
 
-        monkeypatch.setattr(web_search_module, "_search_tavily", lambda *a: _ok_results())
-        result = web_search_handler(query="python")
+        monkeypatch.setattr(web_search_module, "_search_tavily", _async_ok_results)
+        result = await web_search_handler(query="python")
         assert result["status"] == "success"
 
-    def test_no_double_increment_when_tavily_returns_empty(self, monkeypatch):
+    async def test_no_double_increment_when_tavily_returns_empty(self, monkeypatch):
         """B3: Tavily returning [] (not raising) must not charge the budget
         twice once DuckDuckGo's fallback also runs."""
-        monkeypatch.setattr(web_search_module, "_search_tavily", lambda *a: [])
+
+        async def empty_tavily(*a):
+            return []
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", empty_tavily)
         monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
 
-        result = web_search_handler(query="python")
+        result = await web_search_handler(query="python")
         assert result["status"] == "success"
         assert result["data"]["provider"] == "duckduckgo"
         assert budget.get_web_search_count() == 1
 
-    def test_single_increment_on_tavily_success(self, monkeypatch):
-        monkeypatch.setattr(web_search_module, "_search_tavily", lambda *a: _ok_results())
-        result = web_search_handler(query="python")
+    async def test_single_increment_on_tavily_success(self, monkeypatch):
+        monkeypatch.setattr(web_search_module, "_search_tavily", _async_ok_results)
+        result = await web_search_handler(query="python")
         assert result["status"] == "success"
         assert budget.get_web_search_count() == 1
 
-    def test_single_increment_on_duckduckgo_fallback(self, monkeypatch):
-        def raising_tavily(*a):
+    async def test_single_increment_on_duckduckgo_fallback(self, monkeypatch):
+        async def raising_tavily(*a):
             raise ValueError("no api key")
 
         monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
         monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
-        result = web_search_handler(query="python")
+        result = await web_search_handler(query="python")
         assert result["status"] == "success"
         assert budget.get_web_search_count() == 1
+
+    async def test_ningun_proveedor_da_resultados_no_gasta_presupuesto(self, monkeypatch):
+        """Una busqueda que no encuentra nada no ha consumido cuota.
+
+        La rama Tavily ya seguia este criterio (`if results:`); la de
+        DuckDuckGo incrementaba igual con la lista vacia.
+        """
+
+        async def empty_tavily(*a):
+            return []
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", empty_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: [])
+
+        await web_search_handler(query="python")
+        assert budget.get_web_search_count() == 0
+
+
+class TestNuncaDevuelveUnResultadoVacio:
+    """Un tool_result vacio deja el tool_use huerfano y Bedrock rechaza la
+    peticion entera.
+
+    Con `status: success` y `results: []`, langchain_aws DESCARTA el
+    tool_result al convertir el mensaje; el tool_use se queda solo y la
+    llamada muere con "ValidationException: tool_use ids were found without
+    tool_result blocks". Medido el 2026-08-09: mato planning_query_cs en 2
+    de 3 repeticiones del experiment spark-match-agent-80dad4e5, y el
+    ToolCallRepairMiddleware no lo cubria porque el fallo ocurria dentro de
+    un subagente (ver TestMiddlewareEnSubagentes).
+    """
+
+    @staticmethod
+    async def _sin_resultados(monkeypatch):
+        async def empty_tavily(*a):
+            return []
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", empty_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: [])
+        return await web_search_handler(query="algo que no existe")
+
+    async def test_sin_resultados_no_devuelve_success(self, monkeypatch):
+        result = await self._sin_resultados(monkeypatch)
+        assert result["status"] == "error"
+
+    async def test_sin_resultados_no_devuelve_una_lista_vacia(self, monkeypatch):
+        # El nucleo de la regresion: nada de `data.results == []`.
+        result = await self._sin_resultados(monkeypatch)
+        assert result["data"] is None
+
+    async def test_el_error_es_texto_util_para_el_agente(self, monkeypatch):
+        # El agente lee esto y decide que hacer; tiene que decir algo.
+        result = await self._sin_resultados(monkeypatch)
+        assert result["errors"]
+        assert "No results found" in result["errors"][0]
 
 
 class TestWebSearchHandlerProviders:
     """Provider selection and fallback behavior."""
 
-    def test_tavily_success_returns_tavily_provider(self, monkeypatch):
-        monkeypatch.setattr(web_search_module, "_search_tavily", lambda *a: _ok_results(3))
-        result = web_search_handler(query="python")
+    async def test_tavily_success_returns_tavily_provider(self, monkeypatch):
+        async def fake_tavily(*a):
+            return _ok_results(3)
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", fake_tavily)
+        result = await web_search_handler(query="python")
         assert result["status"] == "success"
         assert result["data"]["provider"] == "tavily"
         assert len(result["data"]["results"]) == 3
 
-    def test_tavily_failure_falls_back_to_duckduckgo(self, monkeypatch):
-        def raising_tavily(*a):
+    async def test_tavily_failure_falls_back_to_duckduckgo(self, monkeypatch):
+        async def raising_tavily(*a):
             raise RuntimeError("tavily down")
 
         monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
         monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
-        result = web_search_handler(query="python")
+        result = await web_search_handler(query="python")
         assert result["status"] == "success"
         assert result["data"]["provider"] == "duckduckgo"
 
-    def test_both_providers_fail_returns_error(self, monkeypatch):
-        def raising_tavily(*a):
+    async def test_both_providers_fail_returns_error(self, monkeypatch):
+        async def raising_tavily(*a):
             raise RuntimeError("tavily down")
 
         def raising_ddg(*a):
@@ -147,9 +221,169 @@ class TestWebSearchHandlerProviders:
 
         monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
         monkeypatch.setattr(web_search_module, "_search_duckduckgo", raising_ddg)
-        result = web_search_handler(query="python")
+        result = await web_search_handler(query="python")
         assert result["status"] == "error"
         assert result["data"] is None
         assert "unavailable" in result["errors"][0].lower()
         # Neither attempt should have charged the budget.
         assert budget.get_web_search_count() == 0
+
+
+class TestWebSearchHandlerTypedTavilyErrors:
+    """Sprint 8, task 8.2: distinguish 401 (API key) from 429/timeout/network.
+
+    Only the API-key category (401-equivalent: InvalidAPIKeyError /
+    MissingAPIKeyError) must skip the DuckDuckGo fallback — it's our own
+    misconfiguration, not something a different search provider can fix.
+    Every other Tavily failure (429, timeout, network, or anything
+    unclassified) must keep falling back to DuckDuckGo, exactly like
+    before this task.
+    """
+
+    async def test_invalid_api_key_does_not_fall_back_to_duckduckgo(self, monkeypatch):
+        from tavily.errors import InvalidAPIKeyError
+
+        async def raising_tavily(*a):
+            raise InvalidAPIKeyError("invalid key")
+
+        called = {"ddg": False}
+
+        def spy_ddg(*a):
+            called["ddg"] = True
+            return _ok_results()
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", spy_ddg)
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "error"
+        assert called["ddg"] is False
+        assert "API key" in result["errors"][0]
+        assert budget.get_web_search_count() == 0
+
+    async def test_missing_api_key_does_not_fall_back_to_duckduckgo(self, monkeypatch):
+        from tavily.errors import MissingAPIKeyError
+
+        async def raising_tavily(*a):
+            raise MissingAPIKeyError()
+
+        called = {"ddg": False}
+
+        def spy_ddg(*a):
+            called["ddg"] = True
+            return _ok_results()
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", spy_ddg)
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "error"
+        assert called["ddg"] is False
+
+    async def test_rate_limit_falls_back_to_duckduckgo(self, monkeypatch):
+        """429 must still trigger the DuckDuckGo fallback."""
+        from tavily.errors import UsageLimitExceededError
+
+        async def raising_tavily(*a):
+            raise UsageLimitExceededError("rate limited")
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+    async def test_timeout_falls_back_to_duckduckgo(self, monkeypatch):
+        """Tavily's own TimeoutError (wrapping httpx.TimeoutException) must
+        still trigger the DuckDuckGo fallback."""
+        from tavily.errors import TimeoutError as TavilyTimeoutError
+
+        async def raising_tavily(*a):
+            raise TavilyTimeoutError(60)
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+    async def test_network_error_falls_back_to_duckduckgo(self, monkeypatch):
+        """A raw httpx.TransportError (DNS/connection failure, not wrapped
+        by tavily) must still trigger the DuckDuckGo fallback."""
+        import httpx
+
+        async def raising_tavily(*a):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+    async def test_forbidden_error_falls_back_to_duckduckgo(self, monkeypatch):
+        """ForbiddenError (403) isn't explicitly named in the roadmap's
+        401/429/timeout/network list — it falls into the generic catch-all,
+        preserving the pre-8.2 safe default of falling back rather than
+        failing hard on an unclassified category."""
+        from tavily.errors import ForbiddenError
+
+        async def raising_tavily(*a):
+            raise ForbiddenError("forbidden")
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", lambda *a: _ok_results())
+
+        result = await web_search_handler(query="python")
+
+        assert result["status"] == "success"
+        assert result["data"]["provider"] == "duckduckgo"
+
+
+class TestWebSearchHandlerDoesNotBlockEventLoop:
+    """Sprint 8, task 8.1 DoD: web_search must not block the event loop.
+
+    DuckDuckGo (``_search_duckduckgo``) is a plain sync function with no
+    async client upstream — ``web_search_handler`` must run it via
+    ``asyncio.to_thread`` so a slow DDG call can't starve other concurrent
+    coroutines. We prove this by making DDG block with ``time.sleep`` (a
+    real, un-yielding block) and running several calls concurrently: if
+    they were actually serialized on the event loop, wall time would be
+    roughly N * sleep_seconds; offloaded to threads, it stays close to a
+    single sleep_seconds regardless of N (well under the default thread
+    pool size).
+    """
+
+    async def test_concurrent_duckduckgo_fallback_runs_in_worker_threads(self, monkeypatch):
+        sleep_seconds = 0.2
+        concurrency = 4
+
+        async def raising_tavily(*a):
+            raise RuntimeError("tavily down")
+
+        def blocking_ddg(*a):
+            time.sleep(sleep_seconds)
+            return _ok_results()
+
+        monkeypatch.setattr(web_search_module, "_search_tavily", raising_tavily)
+        monkeypatch.setattr(web_search_module, "_search_duckduckgo", blocking_ddg)
+
+        start = time.monotonic()
+        results = await asyncio.gather(
+            *(web_search_handler(query=f"python {i}") for i in range(concurrency))
+        )
+        elapsed = time.monotonic() - start
+
+        assert all(r["status"] == "success" for r in results)
+        # Serialized on the loop: ~= concurrency * sleep_seconds (0.8s here).
+        # Offloaded to threads: ~= sleep_seconds regardless of concurrency.
+        # Generous margin for CI jitter, still well below the serialized bound.
+        assert elapsed < sleep_seconds * concurrency * 0.75

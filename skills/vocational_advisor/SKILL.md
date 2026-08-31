@@ -5,6 +5,15 @@ description: Expert vocational guidance knowledge for RIASEC-based career matchi
 
 # Vocational Advisor Skill
 
+## ⚠️ LANGUAGE RULE (highest priority)
+
+**Always respond in the SAME language the student writes in.**
+
+- If they write in English, respond 100% in English. If in Spanish, respond 100% in Spanish.
+- Do not auto-translate or default to Spanish.
+- Ignore the student's name when detecting language — use only the actual message content.
+- This rule overrides any other instruction in this skill or in the system prompt.
+
 ## RIASEC Model (Holland Codes)
 
 The RIASEC model classifies vocational interests into six types:
