@@ -1,7 +1,7 @@
 # Spark Match Deep Agent — Hoja de Ruta de Finalización
 
 > **Fecha de emisión**: 2026-08-03
-> **Repositorio objetivo**: `spark-match-08-deep-agent` (rama base `dev`, HEAD `f0b139b`)
+> **Repositorio objetivo**: `spark-match-07-deep-agent` (rama base `dev`, HEAD `f0b139b`)
 > **Ventana de ejecución**: agosto → octubre 2026 (Sprints 5 → 11)
 > **Audiencia**: agente de IA o ingeniero que va a implementar. Este documento es autocontenido.
 > **Sustituye/extiende**: `IMPROVEMENTS.md` (Sprints 1–4, ya cerrados)
@@ -63,7 +63,7 @@ Replicar **en código portable** las bondades que AWS Bedrock AgentCore Harness 
 
 ## 2. Estado verificado (2026-08-03)
 
-### 2.1 `spark-match-08-deep-agent`
+### 2.1 `spark-match-07-deep-agent`
 
 **Stack instalado (de `uv.lock`, no de los floors de `pyproject.toml`):**
 
@@ -210,7 +210,7 @@ Los tags `v0.1.x` existen (release-please) pero **la convención documentada es 
 
 Un aviso que salió de cablear trivy: `reusable-trivy.yml` se restauró con el pin `aquasecurity/trivy-action@0.36.0`, un tag que **no existe** (los de ese repositorio llevan prefijo `v`). Nunca resolvió, y nadie lo notó porque la receta no tenía ni un consumidor en toda la organización. Corregido en `01-devops#321`. Restaurar una receta no equivale a que funcione: hay que ejercitarla.
 
-**Gobernanza**: `spark-match-08-deep-agent` ya está registrado en `governance/repository-governance.json` con `reviewerTeam: ai-devs` y `statusChecks: []` (vacío). Hay que poblarlo.
+**Gobernanza**: `spark-match-07-deep-agent` ya está registrado en `governance/repository-governance.json` con `reviewerTeam: ai-devs` y `statusChecks: []` (vacío). Hay que poblarlo.
 
 **Patrón OIDC**: `aws-actions/configure-aws-credentials@v6`, `permissions: id-token: write`. **El ARN del rol se pasa como input string** (desde `${{ vars.* }}`), no como secret, porque GitHub enmascara secrets a `-` cruzando owner y rompe el assume-role.
 
@@ -227,7 +227,7 @@ Un aviso que salió de cablear trivy: `reusable-trivy.yml` se restauró con el p
 
 | Recurso | Detalle |
 |---|---|
-| `spark-match-bedrock-agentcore-deploy-{env}` | Rol OIDC que **ya confía en el repo `spark-match/spark-match-08-deep-agent`** (branches `dev`/`main` + `environment:{env}`) |
+| `spark-match-bedrock-agentcore-deploy-{env}` | Rol OIDC que **ya confía en el repo `spark-match/spark-match-07-deep-agent`** (branches `dev`/`main` + `environment:{env}`) |
 | `spark-match-agentcore-runtime-{env}` | Rol de ejecución. Trust policy acepta **`bedrock-agentcore.amazonaws.com` Y `ecs-tasks.amazonaws.com`** → sirve igual si se despliega en ECS/Fargate |
 | KMS CMK | `alias/spark-match-{env}-main`, rotación activa |
 | Permisos ECR | 25 acciones sobre `arn:aws:ecr:us-east-1:681526276858:repository/spark-match-agent-*-{env}` |
@@ -1285,7 +1285,7 @@ jobs:
 
 | # | Tarea | Dónde |
 |---|---|---|
-| 10.C.1 | Poblar `statusChecks` | `01-devops` → `governance/repository-governance.json`, entrada `spark-match-08-deep-agent` (hoy `[]`). Añadir `python-ci`, `codeql`, `gitleaks`, `sonar-python`. Luego `./scripts/configure-repo-rulesets.sh --apply --repos spark-match-08-deep-agent`. |
+| 10.C.1 | Poblar `statusChecks` | `01-devops` → `governance/repository-governance.json`, entrada `spark-match-07-deep-agent` (hoy `[]`). Añadir `python-ci`, `codeql`, `gitleaks`, `sonar-python`. Luego `./scripts/configure-repo-rulesets.sh --apply --repos spark-match-07-deep-agent`. |
 | 10.C.2 | commitlint + release-please | Añadir `.commitlintrc.json`, `.github/release-please-config.json`, `.release-please-manifest.json` y los workflows que consumen `reusable-commitlint.yml` / `reusable-release-please.yml`. Resuelve B10. |
 | 10.C.3 | CODEOWNERS sin catch-all | Alinear con `docs/GOVERNANCE-STANDARD.md` de `01-devops`. Resolver la contradicción actual (PR template dice `product-owners`, CODEOWNERS dice `ai-devs`). |
 | 10.C.4 | Proyecto SonarCloud | **No existe** hoy (verificado: la búsqueda de proyectos `spark-match` devuelve 0). Crearlo con el quality gate "Spark Match Way" (coverage ≥80%, 0 code smells nuevos, 0 bugs, 0 vulns, dup ≤3%). |
@@ -1331,7 +1331,7 @@ jobs:
 >
 > **Estado de las solicitudes: R1, R2, R3 y R6 cerradas; R4 parcialmente; solo R5 sigue abierta.** El texto de abajo se conserva porque documenta lo que se pidió y por qué; la cabecera de cada solicitud dice si sigue viva.
 >
-> `spark-match-08-deep-agent` fue efectivamente el primer consumidor Python real del catálogo, y por serlo destapó que `reusable-trivy.yml` estaba rota desde su restauración (ver R4).
+> `spark-match-07-deep-agent` fue efectivamente el primer consumidor Python real del catálogo, y por serlo destapó que `reusable-trivy.yml` estaba rota desde su restauración (ver R4).
 
 #### Solicitud R1 — `reusable-python-ci.yml` — CERRADA (existe y este repo la consume)
 
@@ -1374,7 +1374,7 @@ Para cerrarla del todo hace falta pedir upstream que `reusable-trivy.yml` acepte
 
 #### Solicitud R5 — gobernanza (🟡 media) — ABIERTA, la unica que queda
 
-En `governance/repository-governance.json`, entrada `spark-match-08-deep-agent`: cambiar `statusChecks: []` por los checks reales una vez existan R1–R3. Ejecutar `./scripts/configure-repo-rulesets.sh --apply --repos spark-match-08-deep-agent`.
+En `governance/repository-governance.json`, entrada `spark-match-07-deep-agent`: cambiar `statusChecks: []` por los checks reales una vez existan R1–R3. Ejecutar `./scripts/configure-repo-rulesets.sh --apply --repos spark-match-07-deep-agent`.
 
 #### Solicitud R6 — documentación — CERRADA (corregida en 01-devops#320)
 

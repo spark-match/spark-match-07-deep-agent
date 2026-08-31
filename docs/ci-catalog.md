@@ -96,7 +96,7 @@ declare el caller.
 | `DEFAULT_PYTHON_VERSION` | org | Version de Python usada por runners |
 | `SONAR_ORGANIZATION` | org | Org key de SonarCloud |
 | `SONAR_FAIL_ON_QUALITY_GATE` | org | `true` para bloquear merge en quality gate ERROR |
-| `SONAR_PROJECT_KEY` | repo | `spark-match-08-deep-agent` |
+| `SONAR_PROJECT_KEY` | repo | `spark-match-07-deep-agent` |
 | `SONAR_PROJECT_NAME` | repo | `Spark Match - Deep Agent` |
 | `SONAR_SOURCES` | repo | `src` |
 | `SONAR_TESTS` | repo | `tests,evals` |
@@ -128,10 +128,10 @@ GitHub provee el scope automaticamente.
 El rol `spark-match-bedrock-agentcore-deploy-{env}` ya confia en este
 repo por OIDC para:
 
-- `repo:spark-match/spark-match-08-deep-agent:ref:refs/heads/dev`
-- `repo:spark-match/spark-match-08-deep-agent:ref:refs/heads/main`
-- `repo:spark-match/spark-match-08-deep-agent:environment:dev`
-- `repo:spark-match/spark-match-08-deep-agent:environment:production`
+- `repo:spark-match/spark-match-07-deep-agent:ref:refs/heads/dev`
+- `repo:spark-match/spark-match-07-deep-agent:ref:refs/heads/main`
+- `repo:spark-match/spark-match-07-deep-agent:environment:dev`
+- `repo:spark-match/spark-match-07-deep-agent:environment:production`
 
 El ARN debe pasarse al workflow como **input string** (no secret) para
 evitar el enmascarado cross-owner que rompe `assume-role`. Ver
