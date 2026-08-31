@@ -165,7 +165,7 @@ uv run mypy src/
 ## Estructura del proyecto
 
 ```
-08-deep-agent/
+07-deep-agent/
 ├── src/
 │   ├── __init__.py
 │   ├── __main__.py              # Entry point: uv run python -m src
