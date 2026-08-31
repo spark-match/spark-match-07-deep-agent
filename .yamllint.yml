@@ -1,5 +1,5 @@
 ---
-# yamllint configuration for spark-match-08-deep-agent
+# yamllint configuration for spark-match-07-deep-agent
 # Docs: https://yamllint.readthedocs.io/
 # Mirrors spark-match-01-devops/.yamllint.yml with repo-specific ignores
 # (same approach as spark-match-04-frontend).
