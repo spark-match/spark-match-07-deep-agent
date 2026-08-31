@@ -112,8 +112,8 @@ Usuario: preguntas generales  →  coordinador responde directo
 
 ```bash
 # 1. Clonar e instalar dependencias
-git clone git@github.com:spark-match/spark-match-08-deep-agent.git
-cd spark-match-08-deep-agent
+git clone git@github.com:spark-match/spark-match-07-deep-agent.git
+cd spark-match-07-deep-agent
 uv sync
 
 # 2. Configurar variables de entorno

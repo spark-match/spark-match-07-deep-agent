@@ -1,6 +1,6 @@
 # Autenticación y autorización (Sprint 7)
 
-> Contrato exacto entre `spark-match-08-deep-agent` y el JWT emitido por
+> Contrato exacto entre `spark-match-07-deep-agent` y el JWT emitido por
 > `spark-match-03-backend`. Ver también `AGENTS.md` §1.1 (hard rules #4, #5, #6)
 > y `ROADMAP-2026-08.md` Sprint 7 para el diseño original.
 
