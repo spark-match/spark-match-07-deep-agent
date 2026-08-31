@@ -54,7 +54,7 @@ Replicar **en código portable** las bondades que AWS Bedrock AgentCore Harness 
 | 6 | **Memoria** (checkpointer + store + langmem) | 28 h | 7, 9 |
 | 7 | **Auth JWT + roles + aislamiento multi-usuario** | 24 h | 10 |
 | 8 | Tools, web_search, MCP, intent router | 24 h | 9 |
-| 9 | Guardrails + evals ampliados | 20 h | 11 |
+| 9 | **Guardrails + evals ampliados** ✅ | 20 h | 11 |
 | 10 | Contenedor + CI/CD + infraestructura | 24 h | 11 |
 | 11 | Deploy, observabilidad, cierre TFP | 20 h | — |
 | | **Total** | **~156 h** | ~7 semanas a 22 h/sem |
@@ -193,18 +193,22 @@ Los tags `v0.1.x` existen (release-please) pero **la convención documentada es 
 | `reusable-release-please.yml` | Versionado automático |
 | `reusable-terraform-{plan,apply,destroy}.yml` | (solo para el repo de infra) |
 
-**❌ NO disponibles — fueron BORRADAS el 2026-08-02:**
+**Borradas el 2026-08-02 — estado verificado el 2026-08-06:**
 
-| Workflow borrado | Commit | PR |
-|---|---|---|
-| `python-ci.yml` (uv + ruff + mypy + pytest + coverage) | `7ea5a88` | #203 |
-| `container-deploy-ecr.yml` (buildx + ECR + cosign + SBOM) | `7ea5a88` | #203 |
-| `trivy.yml` | `7ea5a88` | #203 |
-| `checkov.yml` | `7ea5a88` | #203 |
-| `sonar-python.yml` | `c007ce6` | #202 |
-| `.github/actions/run-pytest-with-args/` | `58924b8` | #206 |
+| Workflow borrado | Commit | PR | Hoy |
+|---|---|---|---|
+| `python-ci.yml` (uv + ruff + mypy + pytest + coverage) | `7ea5a88` | #203 | ✅ `reusable-python-ci.yml`, **en uso** |
+| `container-deploy-ecr.yml` (buildx + ECR + cosign + SBOM) | `7ea5a88` | #203 | ✅ `reusable-container-deploy-ecr.yml`, **en uso** |
+| `trivy.yml` | `7ea5a88` | #203 | ✅ `reusable-trivy.yml`, **en uso** |
+| `checkov.yml` | `7ea5a88` | #203 | ❌ no restaurada, y no hace falta (ver abajo) |
+| `sonar-python.yml` | `c007ce6` | #202 | ✅ `reusable-sonar-python.yml`, **en uso** |
+| `.github/actions/run-pytest-with-args/` | `58924b8` | #206 | ✅ restaurada |
 
-**Implicación directa**: este repo **no puede consumir un pipeline de Python del catálogo porque no existe**. La §6.1 solicita recrear tres de ellos.
+**Cinco de las seis volvieron** (restauradas el 2026-08-04, PR #297 de `01-devops`), y este repo consume las cuatro que le hacían falta. Esta sección afirmaba lo contrario durante dos días.
+
+`checkov` es la única que no volvió, y no la necesitamos: `spark-match-02-infrastructure` lo corre localmente con una matriz por módulo (`terraform-security-scan.yml`), algo que el reusable —pensado para escanear un solo path— no podía hacer.
+
+Un aviso que salió de cablear trivy: `reusable-trivy.yml` se restauró con el pin `aquasecurity/trivy-action@0.36.0`, un tag que **no existe** (los de ese repositorio llevan prefijo `v`). Nunca resolvió, y nadie lo notó porque la receta no tenía ni un consumidor en toda la organización. Corregido en `01-devops#321`. Restaurar una receta no equivale a que funcione: hay que ejercitarla.
 
 **Gobernanza**: `spark-match-08-deep-agent` ya está registrado en `governance/repository-governance.json` con `reviewerTeam: ai-devs` y `statusChecks: []` (vacío). Hay que poblarlo.
 
@@ -847,14 +851,14 @@ def create_spark_agent(persistence: Persistence) -> CompiledStateGraph[Any, Any,
 
 Hoy `src/api/app.py` extrae `input_data.thread_id` **solo para el contador de budget**; nunca llega al grafo. `LangGraphAgent` sí lo inyecta en `config["configurable"]["thread_id"]` (línea ~82), pero sin checkpointer no servía de nada. Con checkpointer ya funciona; **verificar con un test de dos turnos** que el segundo turno ve el primero.
 
-**DoD Sprint 6**
-- [ ] Test: dos requests HTTP consecutivos con el mismo `thread_id` → el agente recuerda el nombre del estudiante del turno 1.
-- [ ] Test: dos `thread_id` distintos con el mismo `user_id` → el perfil RIASEC persiste entre ambos (memoria entre sesiones).
-- [ ] Test: dos `user_id` distintos → aislamiento total, `user_a` no ve nada de `user_b`.
-- [ ] `SPARK_PERSISTENCE_BACKEND=memory|sqlite` funcionan **sin AWS**. `postgres` cubierto con `testcontainers` o marcado `@pytest.mark.integration`.
-- [ ] `src/memory/profile_manager.py` deja de ser código muerto; hay test que lo ejerce.
-- [ ] `langmem` deja de ser dependencia fantasma.
-- [ ] README actualizado: quitar la afirmación falsa de persistencia y describir la real.
+**DoD Sprint 6** — cerrado 2026-08-04 (PRs #31, #32, #33)
+- [x] Test: dos requests HTTP consecutivos con el mismo `thread_id` → el agente recuerda el nombre del estudiante del turno 1 (`TestCheckpointerPersistsConversationAcrossInvocations`, PR #32).
+- [x] Test: el perfil persiste independientemente del `thread_id` — `ProfileHydrationMiddleware` lee del namespace `("spark-match", user_id, "profile")`, que no incluye `thread_id` (`tests/agent/memory_middleware.py`, PR #33). La extracción real vía langmem no se re-testea (delegada a la librería); se testea que la lectura funciona con cualquier perfil ya presente en el store.
+- [ ] ~~Test: dos `user_id` distintos → aislamiento total~~ — **diferido a Sprint 7 explícitamente**. Hoy `user_id` es un placeholder fijo (`src/agent/user_context.DEFAULT_USER_ID`) hasta que el JWT real esté disponible; un test de aislamiento hoy solo probaría que un placeholder es igual a sí mismo, no aislamiento real. El namespacing SÍ existe estructuralmente (partición por `user_id` en todos los namespaces), listo para recibir el valor real sin cambios de forma.
+- [x] `SPARK_PERSISTENCE_BACKEND=memory|sqlite` funcionan **sin AWS** (PR #31). `postgres` sigue sin implementar (tarea 6.A.3, DSN vía Secrets Manager) — no bloqueante para el TFP (hard rule #7).
+- [x] `src/memory/profile_manager.py` deja de ser código muerto; `build_profile_manager`/`build_reflection_executor` tienen test (`tests/memory/profile_manager.py`, PR #33).
+- [x] `langmem` deja de ser dependencia fantasma — usado en `profile_manager.py`, `memory_middleware.py` y las tools `manage_prefs`/`search_memory` en `factory.py`.
+- [x] README actualizado: fila de persistencia añadida, claim de `langmem` corregido a "activo desde Sprint 6".
 
 ---
 
@@ -1062,14 +1066,18 @@ Aplicarlo con un `wrap_tool_call` que rechace tools fuera de capability, y con `
 | 7.E.4 | Budget por usuario, no por proceso | `src/budget.py` usa `dict` + `ContextVar` en memoria → se rompe con `--workers > 1`. Mover el contador al `store`, ns `("spark-match", uid, "budget")`. |
 | 7.E.5 | Tests del API | `TestClient`: 401 sin token, 401 token expirado, 401 firma mala, 403 thread ajeno, 200 feliz, y que `/health` siga público. |
 
-**DoD Sprint 7**
-- [ ] `POST /ag-ui` devuelve 401 sin `Authorization`.
-- [ ] Un JWT firmado con `iss/aud` correctos y la clave del backend valida OK (test con clave sintética).
-- [ ] `user_a` no puede leer el `thread_id` de `user_b` (403).
-- [ ] `runtime.context.user_id` está disponible dentro de una tool (test).
-- [ ] Namespaces del store contienen `user_id` real, verificado inspeccionando el store.
-- [ ] `src/api/app.py` pasa de 0% a ≥80% de cobertura.
-- [ ] Documentado en `docs/auth.md` el contrato exacto y la limitación de roles.
+**DoD Sprint 7** — núcleo (7.A–7.D) cerrado 2026-08-04; 7.E cerrado 2026-08-04
+- [x] `POST /ag-ui` devuelve 401 sin `Authorization` (`tests/api/app.py::TestAgUiRequiresAuth`).
+- [x] Un JWT firmado con `iss/aud` correctos y la clave del backend valida OK (test con clave sintética, `tests/auth/jwt_validator.py` + `tests/api/app.py::TestAgUiHappyPath`).
+- [x] `user_a` no puede leer el `thread_id` de `user_b` (403) — probado a nivel unitario en `tests/auth/thread_guard.py::test_different_owner_is_rejected`. No se reproduce en el stack HTTP completo porque `derive_thread_id` (7.B) ya evita la colisión por construcción: dos usuarios nunca aterrizan en el mismo `thread_id` derivado, así que un 403 real requeriría forzar deliberadamente esa colisión.
+- [x] `runtime.context.user_id` está disponible dentro de una tool (test) — `tests/agent/memory_middleware.py` (Sprint 6) ya prueba que los middlewares leen `runtime.context.user_id`; `tests/api/app.py::test_thread_owner_is_registered_under_the_real_user_id` prueba que ese valor es el `user_id` real del JWT end-to-end, no el placeholder `DEFAULT_USER_ID`.
+- [x] Namespaces del store contienen `user_id` real, verificado inspeccionando el store (`tests/api/app.py`).
+- [x] `src/api/app.py` pasa de 0% a ≥80% de cobertura (99% con `tests/api/app.py`).
+- [x] Documentado en `docs/auth.md` el contrato exacto y la limitación de roles.
+- [x] 7.E.1 CORS validator: `Settings._validate_cors_origins` rechaza `"*"` y orígenes sin esquema al arrancar (`tests/config/settings.py::TestCorsOriginsValidation`).
+- [x] 7.E.2 Cabeceras de seguridad: `SecurityHeadersMiddleware` añade `X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy` a toda respuesta, incluidos errores (`tests/api/app.py::TestSecurityHeaders`).
+- [x] 7.E.3 Rate limiting: `slowapi`, 5 req/min por `user_id` (fallback IP) en `/ag-ui`, configurable vía `SPARK_RATE_LIMIT_PER_MINUTE` (`tests/api/app.py::TestRateLimit`).
+- [x] 7.E.4 Budget por usuario en el store: `src/auth/budget.py::check_and_increment_daily_budget`, namespace `("spark-match", user_id, "budget")`, `SPARK_BUDGET_MAX_REQUESTS_PER_USER_PER_DAY` (`tests/auth/budget.py`). Distinto y complementario al cupo de `web_search` por turno (`src/budget.py`), que sigue en proceso hasta la migración async de Sprint 8 (tarea 8.1) — documentado explícitamente en `docs/auth.md` §7/§8.4.
 
 ---
 
@@ -1109,12 +1117,12 @@ class IntentRouterMiddleware(AgentMiddleware):
 Clasificar con heurísticas (longitud, presencia de tool_calls previas, keywords) **antes** de considerar un LLM clasificador: el POC v2 alcanzó 38% de cobertura Haiku sin coste adicional de clasificación.
 
 **DoD Sprint 8**
-- [ ] `web_search` no bloquea el event loop (test con `asyncio` concurrente).
-- [ ] Fallback a DDG **no** se dispara con 401 de Tavily.
-- [ ] `SkillsMiddleware` está en el stack (assert sobre `agent.nodes` o sobre el system prompt renderizado).
-- [ ] Router activo con métrica `intent_route` emitida; ≥30% de turnos por Haiku en el dataset de evals.
-- [ ] `.mcp.json` presente y documentado.
-- [ ] ≥20 carreras en `data/careers/`.
+- [x] `web_search` no bloquea el event loop (test con `asyncio` concurrente): `AsyncTavilyClient` + `asyncio.to_thread` para DDG (`tests/tools/web_search.py::TestWebSearchHandlerDoesNotBlockEventLoop`).
+- [x] Fallback a DDG **no** se dispara con 401 de Tavily: `InvalidAPIKeyError`/`MissingAPIKeyError` retornan error de inmediato; 429/timeout/red siguen cayendo a DDG (`tests/tools/web_search.py::TestWebSearchHandlerTypedTavilyErrors`).
+- [x] `SkillsMiddleware` está en el stack (assert sobre `agent.nodes` o sobre el system prompt renderizado): nodo presente y contenido real del skill confirmado en el system message (`tests/agent/factory.py::TestAgentGraphStructure::test_skills_middleware_is_wired_into_the_graph`, `TestSkillsAreLoadedIntoTheSystemPrompt`).
+- [x] Router activo con métrica `intent_route` emitida; ≥30% de turnos por Haiku en el dataset de evals: heurística en `src/agent/intent.py` (longitud + keywords narrativos + saludo/chitchat), `IntentRouterMiddleware` en `src/agent/router_middleware.py` loguea `intent_route intent=... model=...`. Cobertura real medida contra `evals/dataset.jsonl` (no un corpus sintético aparte): 31.6% (6/19 turnos) — `tests/agent/intent.py::TestFastIntentCoverageOnEvalDataset`. Enrutamiento real (no solo presencia de nodo, que no aplica a middleware `wrap_model_call`-only) probado en `tests/agent/factory.py::TestIntentRouterSelectsTheModelPerTurn`.
+- [x] `.mcp.json` presente y documentado: servidor MCP en `src/mcp/server.py` (`MCPServer` del SDK oficial `mcp`, no `langchain-mcp-adapters` — esa librería es cliente, no servidor; ver `docs/mcp.md` §2 para la corrección). Registra los 4 handlers puros como MCP tools (mismo delegador fino que `src/tools/*/tool.py` usa para LangChain). Alcance: solo exposición, no consumo de servidores externos (decisión confirmada). Documentado en `docs/mcp.md`. Tests: `tests/mcp/server.py` (9 casos, vía `list_tools()`/`call_tool()` reales).
+- [x] ≥20 carreras en `data/careers/`: 10 nuevas (`law`, `nursing`, `accounting`, `journalism`, `biology`, `music`, `agronomy`, `tourism`, `physics`, `veterinary`) sumadas a las 10 existentes — 20 total, todas con `id`/`riasec_profile` únicos. Contenido puro, sin cambios de código (`data/careers/README.md`). Guarda de regresión: `tests/tools/catalog.py::TestCareerCatalogSize`.
 
 ---
 
@@ -1143,11 +1151,13 @@ Clasificar con heurísticas (longitud, presencia de tool_calls previas, keywords
 | 9.B.5 | `RubricMiddleware` | `deepagents` expone `RubricMiddleware` — evaluar si sustituye parte del judge propio. |
 
 **DoD Sprint 9**
-- [ ] ≥30 casos en `evals/dataset.jsonl`; ≥5 de memoria y ≥4 de guardrails.
-- [ ] Judge multi-dimensión con score ponderado y umbral 0.7.
-- [ ] `--mode mock` en CI **detecta** una regresión inyectada a propósito (test del test).
-- [ ] `docs/benchmarks.md` con la comparativa Deep Agents vs POC v1 vs POC v2.
-- [ ] Guardrails con tests: 5 prompts de inyección bloqueados, 0 falsos positivos en los 30 casos legítimos.
+- [x] ≥30 casos en `evals/dataset.jsonl`; ≥5 de memoria y ≥4 de guardrails. *(PR #48: 30 casos totales, 5 memoria, 5 guardrails)*
+- [x] Judge multi-dimensión con score ponderado y umbral 0.7. *(PR #49: rubric POC v2 `riasec_accuracy 0.4, career_relevance 0.3, tone 0.2, safety 0.1`, passingScore=0.7, modelo Haiku 4.5 allowlist IAM)*
+- [x] `--mode mock` en CI **detecta** una regresión inyectada a propósito (test del test). *(PR #50: 3 tests con monkeypatch sobre los handlers reales; tambien cerro un bug real: la heuristica de matching no verificaba `expected_careers_count`)*
+- [x] `docs/benchmarks.md` con la comparativa Deep Agents vs POC v1 vs POC v2. *(PR #51: cifras POC verbatim, Deep Agent marcado "Pendiente -- Sprint 11" honestamente)*
+- [x] Guardrails con tests: 5 prompts de inyección bloqueados, 0 falsos positivos en los 30 casos legítimos. *(ampliado por PR #48: 25 casos legitimos no son flaggeados por `tests/agent/guardrails.py::test_no_eval_dataset_user_message_triggers_the_guardrail`)*
+
+> **Sprint 9 cerrado 2026-08-04.** 10 PRs individuales (#43, #44, #45, #46, #47, #48, #49, #50, #51, #52), 352 tests pytest passing, 30/30 evals `--mode mock` passing, gate completo verde. Validacion empirica del RubricMiddleware (subir JudgeScore via self-evaluation in-loop) queda para Sprint 11 -- ver `docs/rubric-middleware-evaluation.md` SS6.
 
 ---
 
@@ -1317,9 +1327,13 @@ jobs:
 
 ### 6.1 `spark-match-01-devops` — pipelines reutilizables
 
-> **Contexto**: el 2026-08-02 se borraron `python-ci.yml`, `container-deploy-ecr.yml`, `trivy.yml`, `checkov.yml` (commit `7ea5a88`, PR #203) y `sonar-python.yml` (commit `c007ce6`, PR #202). Hoy **ningún repo Python del org puede consumir CI del catálogo**. `spark-match-08-deep-agent` es el primer consumidor Python real.
+> **Contexto (actualizado 2026-08-06)**: el 2026-08-02 se borraron `python-ci.yml`, `container-deploy-ecr.yml`, `trivy.yml`, `checkov.yml` (commit `7ea5a88`, PR #203) y `sonar-python.yml` (commit `c007ce6`, PR #202). El 2026-08-04 se restauraron todas menos `checkov` (PR #297 de `01-devops`).
+>
+> **Estado de las solicitudes: R1, R2, R3 y R6 cerradas; R4 parcialmente; solo R5 sigue abierta.** El texto de abajo se conserva porque documenta lo que se pidió y por qué; la cabecera de cada solicitud dice si sigue viva.
+>
+> `spark-match-08-deep-agent` fue efectivamente el primer consumidor Python real del catálogo, y por serlo destapó que `reusable-trivy.yml` estaba rota desde su restauración (ver R4).
 
-#### Solicitud R1 — `reusable-python-ci.yml` (🔴 bloqueante para Sprint 10)
+#### Solicitud R1 — `reusable-python-ci.yml` — CERRADA (existe y este repo la consume)
 
 Recuperar desde el histórico y modernizar:
 
@@ -1340,27 +1354,33 @@ Cambios exigidos respecto a la versión borrada:
 
 Firma esperada (inputs): `environment-name` (req), `working-directory` (`.`), `commands`, `dependency-groups` (`dev`), `runs-on` (`ubuntu-latest`), `ruff-targets` (`src tests`), `mypy-targets` (`src`), `pytest-targets` (`tests`), `pytest-args`, `coverage-output` (`coverage.xml`), `coverage-threshold`, `permissions-write` (false), `lock-check` (false), `sync-mode` (`full|runtime-only|lint-only`), `frozen` (false), `setup-uv-version` (`latest`), `cache-suffix`, `timeout-minutes` (20), `fail-fast` (false), `python-version`.
 
-#### Solicitud R2 — `reusable-container-deploy-ecr.yml` (🔴 bloqueante para Sprint 10)
+#### Solicitud R2 — `reusable-container-deploy-ecr.yml` — CERRADA (existe y este repo la consume)
 
 Recuperar de `7ea5a88^`. Inputs originales: `environment-name` (req), `aws-region` (`us-east-1`), `ecr-repository` (req), `dockerfile-path` (`Dockerfile`), `context-path` (`.`), `platforms` (`linux/arm64`), `image-tags-input` (`latest,__GITHUB_SHA_SHORT__`), `cache-scope`, `provenance` (true), `sbom` (true), `cosign-sign` (false), `extra-buildx-args`. Secret: `AWS_DEPLOY_ROLE_ARN` (req). Permisos: `id-token: write`, `contents: read`.
 
 Cambio requerido: permitir el ARN también como **input string** (`deploy-role-arn`), igual que hacen `reusable-terraform-plan/apply`, porque GitHub enmascara secrets a `-` cruzando owner y rompe el assume-role.
 
-#### Solicitud R3 — `reusable-sonar-python.yml` (🟡 alta)
+#### Solicitud R3 — `reusable-sonar-python.yml` — CERRADA (existe y este repo la consume)
 
 Recuperar de `c007ce6^`. Simetría con `reusable-sonar-typescript.yml` pero para `coverage.xml` (formato Cobertura) en vez de LCOV, y `sonar.python.version=3.14`.
 
-#### Solicitud R4 — `reusable-trivy.yml` (🟡 media)
+#### Solicitud R4 — `reusable-trivy.yml` (🟡 media) — parcialmente cerrada
 
-Recuperar de `7ea5a88^`. Escaneo de la imagen de contenedor antes del push a ECR. Sin esto el pipeline de despliegue no tiene gate de vulnerabilidades.
+`reusable-trivy.yml` **ya existe** en el catálogo (se recuperó). Este repo lo consume desde `ci.yml` con `scan-type: fs`, que cubre CVEs de las dependencias Python de `uv.lock` y misconfigs del Dockerfile, con `severity: CRITICAL,HIGH` e `ignore-unfixed: true`.
 
-#### Solicitud R5 — gobernanza (🟡 media)
+**Lo que sigue sin cubrirse** es justo lo que pedía la solicitud original: escanear la **imagen** de contenedor. La receta no acepta secrets ni hace login a AWS, así que no puede bajar una imagen de un ECR privado (`scan-type: image` solo sirve para imágenes públicas o ya presentes en el daemon del runner). Sobre la imagen final quedan sin mirar las CVEs del sistema base.
+
+Para cerrarla del todo hace falta pedir upstream que `reusable-trivy.yml` acepte OIDC + login a ECR, y encadenar el escaneo entre el push a ECR y el `roll` a ECS: así una imagen vulnerable no llega a servir tráfico aunque ya esté publicada.
+
+#### Solicitud R5 — gobernanza (🟡 media) — ABIERTA, la unica que queda
 
 En `governance/repository-governance.json`, entrada `spark-match-08-deep-agent`: cambiar `statusChecks: []` por los checks reales una vez existan R1–R3. Ejecutar `./scripts/configure-repo-rulesets.sh --apply --repos spark-match-08-deep-agent`.
 
-#### Solicitud R6 — documentación (🟢 baja)
+#### Solicitud R6 — documentación — CERRADA (corregida en 01-devops#320)
 
-`README.md` y `CONTRIBUTING.md` de `01-devops` **siguen describiendo** la capa "python workflows (uv + ruff + mypy + pytest)" que ya no existe, y `reusable-quality.yml` "266 bats + 18 pytest tests". Corregir la deriva o restaurar los workflows.
+Se pidió porque `README.md` y `CONTRIBUTING.md` de `01-devops` describían una capa de workflows de Python que en ese momento no existía, y `reusable-quality.yml` como "266 bats + 18 pytest tests".
+
+Resuelta por las dos vías a la vez: los workflows se restauraron el 2026-08-04, y la deriva de la documentación se corrigió en `01-devops#320`. Verificado el 2026-08-06: la capa python está documentada y existe, y la cuenta de tests ya no aparece desactualizada.
 
 ---
 
@@ -1539,7 +1559,7 @@ SPARK_API_PORT=8080                         # 8000 lo usa el backend en dev
 | **R-3** | `01-devops` borró el CI de Python hace 1 día | Bloquea Sprint 10 | R1–R4 de §6.1 son **prerrequisito**. Plan B: CI local en este repo hasta que existan. |
 | **R-4** | El contador de budget es in-process | Se rompe con `--workers > 1` o réplicas | Tarea 7.E.4: moverlo al store. |
 | **R-5** | Deriva de documentación generalizada | README, IMPROVEMENTS, docs de `01-devops` e infra desalineados | Cada sprint incluye actualización documental en su DoD. |
-| **R-6** | Coste de la extracción langmem | Un LLM call extra por sesión | `ReflectionExecutor` diferido (30 s) + Haiku. Medir en Sprint 9.B.4. |
+| **R-6** | Coste de la extracción langmem | Un LLM call extra por sesión | `ReflectionExecutor` diferido (30 s) + Haiku. Doc y tablas comparativas listas en `docs/benchmarks.md` (PR #51); medición real pendiente de Sprint 11 live mode. |
 
 ---
 

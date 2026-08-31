@@ -1,6 +1,9 @@
 """Tests for the LangSmith wiring."""
 
+import pytest
+
 from src.config import get_settings
+from src.config.settings import Settings
 from src.observability.langsmith import (
     ENV_API_KEY,
     ENV_PROJECT,
@@ -12,6 +15,19 @@ from src.observability.langsmith import (
 
 class TestLangSmithWiring:
     """Verify env-var push + idempotency."""
+
+    @pytest.fixture(autouse=True)
+    def _ignore_dotenv(self, monkeypatch):
+        """Aisla estos tests del `.env` de quien los corre.
+
+        `Settings` declara `env_file=".env"`, asi que borrar una variable con
+        `monkeypatch.delenv` NO basta: pydantic-settings la vuelve a leer del
+        fichero. `test_disabled_when_api_key_missing` daba rojo en cuanto
+        alguien ponia SPARK_LANGSMITH_API_KEY en su `.env` -- o sea, en cuanto
+        activaba el tracing en local, que es justo lo que este modulo existe
+        para soportar. En CI no se veia porque alli no hay `.env`.
+        """
+        monkeypatch.setitem(Settings.model_config, "env_file", None)
 
     def setup_method(self):
         # Clean state for each test

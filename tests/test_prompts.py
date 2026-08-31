@@ -4,6 +4,7 @@ from src.prompts import (
     ASSESSMENT_SYSTEM_PROMPT,
     MATCHING_SYSTEM_PROMPT,
     PLANNING_SYSTEM_PROMPT,
+    REPORT_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     list_prompts,
     reload_prompts,
@@ -22,13 +23,15 @@ class TestPromptLoader:
     def test_prompts_dir_exists(self):
         assert PROMPTS_DIR.exists()
 
-    def test_list_prompts_returns_four(self):
+    def test_list_prompts_returns_six(self):
         names = list_prompts()
         assert "coordinator" in names
         assert "assessment" in names
         assert "matching" in names
         assert "planning" in names
-        assert len(names) == 4
+        assert "report" in names  # ADR-019, fase 4
+        assert "user_memory_seed" in names  # Sprint 6, task 6.C
+        assert len(names) == 6
 
     def test_coordinator_loaded(self):
         body = load_prompt("coordinator")
@@ -49,6 +52,11 @@ class TestPromptLoader:
         body = load_prompt("planning")
         assert "plan" in body.lower()
         assert "Quick wins" in body
+
+    def test_report_loaded(self):
+        body = load_prompt("report")
+        assert "publish_orientation_report" in body
+        assert "informe" in body.lower()
 
     def test_metadata_parsed(self):
         meta = get_prompt_metadata("coordinator")
@@ -77,6 +85,68 @@ class TestPromptReExports:
     def test_planning_prompt_matches_loader(self):
         assert load_prompt("planning") == PLANNING_SYSTEM_PROMPT
 
+    def test_report_prompt_matches_loader(self):
+        assert load_prompt("report") == REPORT_SYSTEM_PROMPT
+
+
+class TestLanguageRule:
+    """Sprint 9, task 9.A.5: an explicit, high-priority LANGUAGE RULE in
+    every prompt the model can be driven by — not just the coordinator's.
+
+    Root cause (measured in the POC v2 Harness, see
+    ``../orion/AWS-HARNESS-POC-V5.md``): subagents get their own
+    independent ``system_prompt`` (confirmed in
+    ``src/agent/subagents/*.py`` — the coordinator's prompt is never
+    concatenated onto a subagent's), so a language rule that only lives
+    in ``coordinator.md`` never reaches a turn handled by ``assessment``,
+    ``matching``, ``planning`` or ``report``. Each of the 5 prompts must
+    carry its own copy.
+    """
+
+    _MARKER = "LANGUAGE RULE"
+    _NAME_BIAS_GUARD = "Ignora el nombre"
+
+    def test_coordinator_has_language_rule(self):
+        assert self._MARKER in SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in SYSTEM_PROMPT
+
+    def test_assessment_has_language_rule(self):
+        assert self._MARKER in ASSESSMENT_SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in ASSESSMENT_SYSTEM_PROMPT
+
+    def test_matching_has_language_rule(self):
+        assert self._MARKER in MATCHING_SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in MATCHING_SYSTEM_PROMPT
+
+    def test_planning_has_language_rule(self):
+        assert self._MARKER in PLANNING_SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in PLANNING_SYSTEM_PROMPT
+
+    def test_report_has_language_rule(self):
+        # El informe es el unico entregable que el estudiante conserva. Uno
+        # escrito en el idioma equivocado no se corrige en el turno siguiente:
+        # ya esta guardado.
+        assert self._MARKER in REPORT_SYSTEM_PROMPT
+        assert self._NAME_BIAS_GUARD in REPORT_SYSTEM_PROMPT
+
+    def test_language_rule_is_near_the_top_not_buried(self):
+        """Placement matters: the POC v2 fix moved the rule to the front
+        of each prompt/skill (not left as a low-priority trailing bullet)
+        and that's what measured +46% language match. Assert it appears
+        within roughly the first third of the prompt body, not just
+        "somewhere"."""
+        for name, body in (
+            ("coordinator", SYSTEM_PROMPT),
+            ("assessment", ASSESSMENT_SYSTEM_PROMPT),
+            ("matching", MATCHING_SYSTEM_PROMPT),
+            ("planning", PLANNING_SYSTEM_PROMPT),
+            ("report", REPORT_SYSTEM_PROMPT),
+        ):
+            marker_pos = body.index(self._MARKER)
+            assert marker_pos < len(body) / 3, (
+                f"{name}: LANGUAGE RULE is not near the top of the prompt"
+            )
+
 
 class TestParsePromptFile:
     """Edge cases for the frontmatter parser."""
@@ -98,6 +168,50 @@ class TestParsePromptFile:
         meta, body = _parse_prompt_file(path)
         assert meta["audience"] == ""
         assert body == "Just body, no frontmatter."
+
+    def test_unclosed_frontmatter_is_all_body(self, tmp_path):
+        """Abrir sin cerrar no es frontmatter a medias: es un fichero sin el.
+
+        Es ademas el caso que hacia cuadratico al patron anterior — el
+        perezoso recorria el fichero entero buscando un cierre inexistente.
+        """
+        path = tmp_path / "unclosed.md"
+        path.write_text("---\naudience: test\nse quedo abierto\n", encoding="utf-8")
+
+        meta, body = _parse_prompt_file(path)
+
+        assert meta["audience"] == ""
+        assert body.startswith("---")
+
+    def test_empty_frontmatter_is_still_frontmatter(self, tmp_path):
+        """Dos delimitadores seguidos: metadatos vacios y el cuerpo limpio.
+
+        El patron anterior no reconocia este caso y devolvia el fichero
+        entero como cuerpo, delimitadores incluidos. Ninguno de los cinco
+        prompts del paquete lo usa, pero un `---` seguido de otro `---` es un
+        bloque vacio en cualquier lector de frontmatter, no texto.
+        """
+        path = tmp_path / "empty_fm.md"
+        path.write_text("---\n---\nSolo cuerpo.", encoding="utf-8")
+
+        meta, body = _parse_prompt_file(path)
+
+        assert meta == {}
+        assert body == "Solo cuerpo."
+
+    def test_horizontal_rule_in_body_is_not_a_delimiter(self, tmp_path):
+        """Un `---` mas abajo separa secciones del prompt, no cierra nada."""
+        path = tmp_path / "with_rule.md"
+        path.write_text(
+            "---\naudience: test\n---\nIntro.\n\n---\n\nSegunda parte.",
+            encoding="utf-8",
+        )
+
+        meta, body = _parse_prompt_file(path)
+
+        assert meta["audience"] == "test"
+        assert "---" in body
+        assert body.endswith("Segunda parte.")
 
     def test_raises_on_malformed_yaml(self, tmp_path):
         path = tmp_path / "bad_yaml.md"

@@ -63,8 +63,8 @@ lint-check: # Check linting without fixing.
 	uv run ruff check $(QA_FOLDERS)
 
 .PHONY: typecheck
-typecheck: # Run mypy strict type checker.
-	uv run mypy src/
+typecheck: # Run mypy strict type checker (src/ + evals/; tests/ queda fuera a proposito).
+	uv run mypy src/ evals/
 
 .PHONY: qa
 qa: format-check lint-check typecheck # Run all QA checks (no fix).
@@ -115,6 +115,10 @@ eval-dev: # Run evals in mock mode (fast, no AWS credentials needed).
 .PHONY: eval-test
 eval-test: # Run evals in live mode (real LangGraph agent; needs AWS creds).
 	uv run python -m evals.runner --mode live
+
+.PHONY: eval-langsmith
+eval-langsmith: # Same dataset, run as a LangSmith Experiment (needs AWS creds + SPARK_LANGSMITH_*).
+	uv run python -m evals.langsmith_experiment
 
 # =============================================================================
 # Setup

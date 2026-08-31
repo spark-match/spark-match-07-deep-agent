@@ -3,6 +3,12 @@
 Pure business logic for computing affinity between a RIASEC profile and
 the careers in the catalog. No @tool decorator, no LLM dependencies.
 
+Desde el 2026-08-09 puntua las **554 carreras reales** de
+``data/programs/programs.csv`` (via ``load_careers``), no las 20 fichas curadas
+de ``data/careers/*.md``, que se retiraron. Ver ADR-019 de
+spark-match-03-backend. La formula de similitud no cambia: opera sobre codigos
+Holland de tres letras y le da igual de donde salgan.
+
 Structured return schema:
     {
         "status": "success" | "error",
@@ -13,7 +19,7 @@ Structured return schema:
 
 from typing import Any
 
-from src.tools.catalog.loader import Career, load_career_catalog
+from src.tools.programs.loader import SOURCE_LABEL, CareerEntry, load_careers
 
 # Positional weights: first letter = most important, third = least.
 _POSITION_WEIGHTS: tuple[float, ...] = (3.0, 2.0, 1.0)
@@ -74,21 +80,42 @@ def _riasec_similarity(profile_code: str, career_code: str) -> float:
     return round(min(100.0, (raw_score / self_match) * 100), 1)
 
 
-def _score_career(profile_code: str, career: Career) -> dict[str, Any]:
+# Tope de resultados, por el mismo motivo que en los otros dos handlers: se
+# puntuan 554 carreras y devolverlas todas llenaria el contexto del modelo.
+MAX_TOP_N = 25
+
+
+def _score_career(profile_code: str, career: CareerEntry) -> dict[str, Any]:
     """Compute the affinity record for one career."""
     score = _riasec_similarity(profile_code, career["riasec_profile"])
     return {
-        "career_id": career["id"],
-        "career_name": career["name"],
+        "career": career["career"],
+        "career_family": career["career_family"],
         "affinity_score": score,
-        "career_riasec": career["riasec_profile"],
-        "field": career["field"],
+        "riasec_profile": career["riasec_profile"],
+        "program_count": career["program_count"],
         "reason": (
             f"Tu perfil {profile_code} tiene {score}% de afinidad con "
-            f"{career['name']} (perfil {career['riasec_profile']}). "
-            f"Campo: {career['field']}."
+            f"{career['career']} (perfil {career['riasec_profile']}). "
+            f"Familia: {career['career_family']}. Se estudia en "
+            f"{career['program_count']} programa(s) del catalogo."
         ),
     }
+
+
+def _orden(match: dict[str, Any]) -> tuple[float, int, str]:
+    """Afinidad primero; a igualdad, la carrera mas ofertada.
+
+    El desempate importa mucho mas que antes. El catalogo tiene 554 carreras
+    repartidas en solo 52 codigos RIASEC distintos, asi que un perfil cualquiera
+    empata a 100% con una decena de carreras. Con las 20 fichas de
+    `data/careers` los empates eran raros y el orden alfabetico que salia por
+    defecto pasaba desapercibido; con 554 ese orden convertiria el top-5 en un
+    sorteo. Ordenar los empates por numero de programas pone delante lo que el
+    estudiante puede estudiar de verdad en mas sitios, y deja el resultado
+    estable entre llamadas.
+    """
+    return (-match["affinity_score"], -match["program_count"], match["career"])
 
 
 def calculate_affinity_handler(riasec_code: str, top_n: int = 5) -> dict[str, Any]:
@@ -114,20 +141,27 @@ def calculate_affinity_handler(riasec_code: str, top_n: int = 5) -> dict[str, An
 
     if not top_n or top_n < 1:
         top_n = 1
+    top_n = min(top_n, MAX_TOP_N)
 
-    catalog = load_career_catalog()
+    catalog = load_careers()
     if not catalog:
         return {
             "status": "error",
             "data": None,
-            "errors": ["career catalog is empty - check data/careers/"],
+            "errors": ["career catalog is empty - check data/programs/"],
         }
 
     matches = [_score_career(code, c) for c in catalog]
-    matches.sort(key=lambda x: x["affinity_score"], reverse=True)
+    matches.sort(key=_orden)
 
     return {
         "status": "success",
-        "data": {"matches": matches[:top_n], "top_n": top_n, "riasec_code": code},
+        "data": {
+            "matches": matches[:top_n],
+            "top_n": top_n,
+            "riasec_code": code,
+            "total_scored": len(matches),
+            "source": SOURCE_LABEL,
+        },
         "errors": None,
     }
