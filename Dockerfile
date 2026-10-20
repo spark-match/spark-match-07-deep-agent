@@ -67,7 +67,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # ---- Stage 2: runtime -----------------------------------------------------
-FROM --platform=linux/arm64 python:3.14-slim-bookworm AS runtime
+FROM --platform=linux/arm64 python:3.15-slim-bookworm AS runtime
 
 # Bibliotecas del sistema para WeasyPrint (ADR-019, D11) y la tipografia del
 # producto.
